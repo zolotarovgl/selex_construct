@@ -1,0 +1,176 @@
+# Construct Report
+
+`construct_report` is a standalone Python tool that generates a self-contained HTML report for protein construct review.
+
+It is intentionally decoupled from the older browser app. The report generator, its example dataset, and its packaging files now live in this directory.
+
+## Project Layout
+
+- `src/construct_report/`: the standalone Python package
+- `generate_report.py`: simple local wrapper for running from a checkout
+- `examples/`: bundled example inputs
+- `pyproject.toml`: package metadata and CLI entry point
+
+## Required Inputs
+
+The minimal inputs are:
+
+- `--pep`: protein FASTA
+- `--cds`: CDS FASTA
+
+Optional inputs:
+
+- `--domains`: domain BED in protein coordinates
+- `--domains-individual`: optional per-domain TSV
+- `--cases`: optional reference/QC table
+- `--evidence-dir`: optional evidence directory with subfolders such as `conservation/`, `conservation_full/`, `structure_uniprot/`, and `structure_dssp/`
+
+Current assumptions:
+
+- Protein and CDS IDs should match exactly.
+- Domain intervals are amino-acid coordinates, not genomic coordinates.
+- Evidence tracks are mapped only by exact full-sequence match or exact substring placement.
+
+## Evidence Directory Layout
+
+If you provide `--evidence-dir`, the report currently expects a directory shaped like this:
+
+```text
+evidence/
+  conservation/
+    <protein_id>.out
+    <protein_id>*.out
+  conservation_full/
+    <protein_id>.out
+    <protein_id>*.out
+  structure_dssp/
+    <protein_id>.out
+    <protein_id>*.out
+  structure_uniprot/
+    <protein_id>.out
+    <protein_id>*.out
+```
+
+Important details:
+
+- The loader scans the evidence root recursively for `*.out` files.
+- A file is considered for a protein only if its basename starts with that protein ID.
+- Extra directories or unsupported file types are ignored.
+- `structure_dssp/` files often include an extra suffix such as `.1.out`; that is fine as long as the name still starts with the protein ID.
+
+## Evidence File Formats
+
+### `conservation/` and `conservation_full/`
+
+These are numeric per-residue tracks.
+
+Supported formats:
+
+1. Two-line form:
+
+```text
+SEQUENCE
+0.61,0.85,0.79,...
+```
+
+2. Three-line aligned form:
+
+```text
+SEQUENCE
+ALIGNMENT-WITH-GAPS
+0.61,0.85,0.79,...
+```
+
+In the three-line form, gap positions in the alignment line are removed before mapping scores back onto the sequence.
+
+### `structure_dssp/` and `structure_uniprot/`
+
+These are secondary-structure tracks in a FASTA-like two-record format:
+
+```text
+>protein_id@sequence
+SEQUENCE
+>protein_id@secondary
+---HHHHHTTSSPP---
+```
+
+Notes:
+
+- The `@sequence` record is the amino-acid sequence used for mapping.
+- The `@secondary` record is the DSSP-like per-residue structure string.
+- The report currently treats these as structure tracks and renders them as browser lanes.
+
+## Currently Hardcoded Evidence Support
+
+The report does not yet auto-discover arbitrary evidence types. The currently supported evidence kinds are hardcoded:
+
+- `conservation/`
+  rendered as the `Cons DBD` numeric track
+- `conservation_full/`
+  rendered as the `Cons full` numeric track
+- `structure_dssp/`
+  rendered as the `DSSP SS` structure track
+- `structure_uniprot/`
+  rendered as the `UniProt SS` structure track
+
+The hardcoding currently lives in three places inside `src/construct_report/cli.py`:
+
+- `build_evidence_for_protein()`
+  maps evidence subdirectory names to parser/mapping logic
+- `preferredStructureTrack()`
+  prefers `structure_dssp` over `structure_uniprot` for structure-aware range calling
+- `renderEvidenceBrowser()`
+  hardcodes the displayed track order, labels, colors, and row heights
+
+If you add a new evidence type, it will not appear automatically until those code paths are extended.
+
+## Run From a Checkout
+
+From this directory:
+
+```bash
+python3 generate_report.py \
+  --pep examples/proteins.fasta \
+  --cds examples/cds.fasta \
+  --domains examples/domains.bed \
+  --evidence-dir examples/evidence 
+```
+
+If you omit explicit inputs, the tool defaults to the bundled `examples/` folder. If you omit `--output`, it writes `report.html` to your current working directory.
+
+## Installable CLI
+
+From this directory:
+
+```bash
+python3 -m pip install -e .
+construct-report \
+  --pep examples/proteins.fasta \
+  --cds examples/cds.fasta \
+  --domains examples/domains.bed \
+  --evidence-dir examples/evidence \
+  --output report.html
+```
+
+## Range Parameters
+
+The range-calling controls are exposed on the CLI:
+
+- `--slop`
+- `--offset`
+- `--min-structured-run`
+- `--n-terminal-snap-threshold`
+
+These feed the report’s `r1`, `r2`, and `r3` suggestions:
+
+- `r1`: merged domain envelope
+- `r2`: `r1` plus slop
+- `r3`: structure-aware extension of `r2`
+
+## Example Run
+
+```bash
+python3 generate_report.py --output report.html
+```
+
+That command uses the bundled `examples/` dataset and writes a standalone HTML file you can open directly in a browser.
