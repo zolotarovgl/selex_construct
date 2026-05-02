@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -194,12 +195,18 @@ def locate_sequence(target: str, query: str) -> int | None:
 
 def parse_conservation_file(text: str) -> dict[str, Any]:
     lines = clean_lines(text)
+    if not lines:
+        raise ValueError("Conservation file is empty.")
     if len(lines) < 2:
-        raise ValueError("Conservation file must contain at least 2 lines.")
+        raise ValueError(f"Conservation file has only 1 line (need sequence + scores): {lines[0][:60]!r}")
 
     sequence = lines[0]
     if len(lines) == 2:
-        return {"sequence": sequence, "values": [float(value) for value in lines[1].split(",")]}
+        try:
+            values = [float(value) for value in lines[1].split(",")]
+        except ValueError as exc:
+            raise ValueError(f"Conservation scores line is not comma-separated floats: {exc}") from exc
+        return {"sequence": sequence, "values": values}
 
     alignment = list(lines[1])
     raw_scores = [float(value) for value in lines[2].split(",")]
@@ -424,30 +431,33 @@ def build_evidence_for_protein(
         content = path.read_text(encoding="utf-8")
         kind = path.parent.name
 
-        if kind == "conservation":
-            bundle["conservation"] = map_numeric_track(
-                protein_sequence,
-                "Domain conservation",
-                parse_conservation_file(content),
-            )
-        elif kind == "conservation_full":
-            bundle["conservationFull"] = map_numeric_track(
-                protein_sequence,
-                "Full-length conservation",
-                parse_conservation_file(content),
-            )
-        elif kind == "structure_uniprot":
-            bundle["structureUniprot"] = map_structure_track(
-                protein_sequence,
-                "UniProt structure",
-                parse_structure_file(content),
-            )
-        elif kind == "structure_dssp":
-            bundle["structureDssp"] = map_structure_track(
-                protein_sequence,
-                "Local DSSP structure",
-                parse_structure_file(content),
-            )
+        try:
+            if kind == "conservation":
+                bundle["conservation"] = map_numeric_track(
+                    protein_sequence,
+                    "Domain conservation",
+                    parse_conservation_file(content),
+                )
+            elif kind == "conservation_full":
+                bundle["conservationFull"] = map_numeric_track(
+                    protein_sequence,
+                    "Full-length conservation",
+                    parse_conservation_file(content),
+                )
+            elif kind == "structure_uniprot":
+                bundle["structureUniprot"] = map_structure_track(
+                    protein_sequence,
+                    "UniProt structure",
+                    parse_structure_file(content),
+                )
+            elif kind == "structure_dssp":
+                bundle["structureDssp"] = map_structure_track(
+                    protein_sequence,
+                    "Local DSSP structure",
+                    parse_structure_file(content),
+                )
+        except (ValueError, IndexError) as exc:
+            print(f"WARNING: skipping {path}: {exc}", file=sys.stderr)
 
     matching_structures = sorted(
         (path for path in structure_files if path.name.startswith(protein_id)),
@@ -1548,6 +1558,16 @@ def render_html(payload_json: str) -> str:
     const batchPanelEl = document.getElementById("batch-panel");
     const detailPanelEl = document.getElementById("detail-panel");
 
+    let _structureCache = { entryId: null, viewer: null, containerEl: null };
+    let _analysesCache = { paramsKey: null, result: null };
+    let _lastBatchKey = null;
+    let _renderTimer = null;
+
+    function debounceRender() {
+      clearTimeout(_renderTimer);
+      _renderTimer = setTimeout(render, 80);
+    }
+
     function clamp(value, min, max) {
       return Math.max(min, Math.min(max, value));
     }
@@ -1949,12 +1969,18 @@ def render_html(payload_json: str) -> str:
     }
 
     function buildAnalyses() {
-      return dataset.map((entry) => ({
+      const paramsKey = JSON.stringify(state.params);
+      if (_analysesCache.paramsKey === paramsKey && _analysesCache.result) {
+        return _analysesCache.result;
+      }
+      const result = dataset.map((entry) => ({
         entry,
         suggestion: buildSuggestions(entry, state.params),
         validation: validateProtein(entry),
         referenceRange: parseRangeString(entry.reference?.picked_range ?? "")
       }));
+      _analysesCache = { paramsKey, result };
+      return result;
     }
 
     function getActiveRange(analysis) {
@@ -2531,15 +2557,42 @@ def render_html(payload_json: str) -> str:
       `;
     }
 
+    function _applyStructureColors(viewer, entry, activeRange, withZoom) {
+      viewer.setStyle({}, { cartoon: { color: "#d0d0d0" } });
+      const selection = getStructureSelection(entry, activeRange);
+      if (selection.hasOverlap && selection.residueRange) {
+        viewer.setStyle(
+          { resi: `${selection.residueRange.start}-${selection.residueRange.end}` },
+          { cartoon: { color: "#d94f43" } }
+        );
+        if (withZoom) {
+          viewer.zoomTo({ resi: `${selection.residueRange.start}-${selection.residueRange.end}` });
+        }
+      } else if (withZoom) {
+        viewer.zoomTo();
+      }
+    }
+
     function initializeStructureViewer(entry, activeRange) {
-      const viewerEl = detailPanelEl.querySelector("[data-structure-viewer]");
+      const newSlot = detailPanelEl.querySelector("[data-structure-viewer]");
       const model = entry.evidence.structureModel;
-      if (!viewerEl || !model?.text) {
+      if (!newSlot || !model?.text) {
+        _structureCache = { entryId: null, viewer: null, containerEl: null };
         return;
       }
 
+      if (_structureCache.entryId === entry.id && _structureCache.viewer && _structureCache.containerEl) {
+        newSlot.replaceWith(_structureCache.containerEl);
+        _applyStructureColors(_structureCache.viewer, entry, activeRange, false);
+        _structureCache.viewer.resize();
+        _structureCache.viewer.render();
+        return;
+      }
+
+      _structureCache = { entryId: null, viewer: null, containerEl: null };
+
       if (!window.$3Dmol || typeof window.$3Dmol.createViewer !== "function") {
-        viewerEl.innerHTML = `
+        newSlot.innerHTML = `
           <div class="structure-fallback">
             The 3D viewer library did not load. Open the report with internet access to fetch 3Dmol.js, or vendor the script locally for offline viewing.
           </div>
@@ -2548,24 +2601,15 @@ def render_html(payload_json: str) -> str:
       }
 
       try {
-        const viewer = window.$3Dmol.createViewer(viewerEl, { backgroundColor: "white" });
+        const viewer = window.$3Dmol.createViewer(newSlot, { backgroundColor: "white" });
         viewer.addModel(model.text, model.format || "pdb");
-        viewer.setStyle({}, { cartoon: { color: "#d0d0d0" } });
-        const selection = getStructureSelection(entry, activeRange);
-        if (selection.hasOverlap && selection.residueRange) {
-          viewer.setStyle(
-            { resi: `${selection.residueRange.start}-${selection.residueRange.end}` },
-            { cartoon: { color: "#d94f43" } }
-          );
-          viewer.zoomTo({ resi: `${selection.residueRange.start}-${selection.residueRange.end}` });
-        } else {
-          viewer.zoomTo();
-        }
+        _applyStructureColors(viewer, entry, activeRange, true);
         viewer.resize();
         viewer.render();
+        _structureCache = { entryId: entry.id, viewer, containerEl: newSlot };
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        viewerEl.innerHTML = `
+        newSlot.innerHTML = `
           <div class="structure-fallback">
             Failed to render the local PDB model: ${escapeHtml(message)}
           </div>
@@ -3041,10 +3085,11 @@ def render_html(payload_json: str) -> str:
               );
 
               if (handle === "start") {
-                applyManualRange(Math.min(aa, currentRange.end - 1), currentRange.end);
+                state.manualRanges[entry.id] = clampRange({ start: Math.min(aa, currentRange.end - 1), end: currentRange.end }, entry.proteinSequence.length);
               } else {
-                applyManualRange(currentRange.start, Math.max(aa, currentRange.start + 1));
+                state.manualRanges[entry.id] = clampRange({ start: currentRange.start, end: Math.max(aa, currentRange.start + 1) }, entry.proteinSequence.length);
               }
+              debounceRender();
             };
 
             const onUp = () => {
@@ -3061,13 +3106,13 @@ def render_html(payload_json: str) -> str:
       }
 
       detailPanelEl.querySelector("#range-start-input")?.addEventListener("input", (event) => {
-        const nextStart = Number(event.target.value);
-        applyManualRange(nextStart, getActiveRange(analysis).end);
+        state.manualRanges[entry.id] = clampRange({ start: Number(event.target.value), end: getActiveRange(analysis).end }, entry.proteinSequence.length);
+        debounceRender();
       });
 
       detailPanelEl.querySelector("#range-end-input")?.addEventListener("input", (event) => {
-        const nextEnd = Number(event.target.value);
-        applyManualRange(getActiveRange(analysis).start, nextEnd);
+        state.manualRanges[entry.id] = clampRange({ start: getActiveRange(analysis).start, end: Number(event.target.value) }, entry.proteinSequence.length);
+        debounceRender();
       });
 
       detailPanelEl.querySelectorAll("[data-param-key]").forEach((input) => {
@@ -3075,7 +3120,7 @@ def render_html(payload_json: str) -> str:
           const key = input.getAttribute("data-param-key");
           const value = Math.max(1, Number(event.target.value) || 1);
           state.params[key] = value;
-          render();
+          debounceRender();
         });
       });
 
@@ -3114,8 +3159,12 @@ def render_html(payload_json: str) -> str:
         analyses[0] ??
         null;
 
+      const batchKey = `${state.search}|${state.filter}|${state.selectedId}`;
       renderToolbar(selectedAnalysis, analyses);
-      renderBatch(visibleAnalyses, state.selectedId);
+      if (batchKey !== _lastBatchKey) {
+        renderBatch(visibleAnalyses, state.selectedId);
+        _lastBatchKey = batchKey;
+      }
       renderDetail(selectedAnalysis);
     }
 
