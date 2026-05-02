@@ -56,14 +56,19 @@ evidence/
   structure_uniprot/
     <protein_id>.out
     <protein_id>*.out
+  structures/
+    <protein_id>.pdb
+    <protein_id>*.pdb
 ```
 
 Important details:
 
 - The loader scans the evidence root recursively for `*.out` files.
+- Local structure models are loaded separately from recursive `*.pdb` files.
 - A file is considered for a protein only if its basename starts with that protein ID.
 - Extra directories or unsupported file types are ignored.
 - `structure_dssp/` files often include an extra suffix such as `.1.out`; that is fine as long as the name still starts with the protein ID.
+- The bundled example structure data are organized as `examples/evidence/structures/<protein_id>.pdb`.
 
 ## Currently Hardcoded Evidence Support
 
@@ -77,17 +82,30 @@ The report does not yet auto-discover arbitrary evidence types. The currently su
   rendered as the `DSSP SS` structure track
 - `structure_uniprot/`
   rendered as the `UniProt SS` structure track
+- `structures/`
+  rendered as the 3D structure viewer panel when a matching `.pdb` file is present
 
 The hardcoding currently lives in three places inside `src/construct_report/cli.py`:
 
 - `build_evidence_for_protein()`
-  maps evidence subdirectory names to parser/mapping logic
+  maps evidence subdirectory names to parser/mapping logic and attaches the first matching local `.pdb` model
 - `preferredStructureTrack()`
   prefers `structure_dssp` over `structure_uniprot` for structure-aware range calling
 - `renderEvidenceBrowser()`
   hardcodes the displayed track order, labels, colors, and row heights
+- `renderStructurePanel()` / `initializeStructureViewer()`
+  render the optional 3D structure panel and recolor the currently selected AA range
 
 If you add a new evidence type, it will not appear automatically until those code paths are extended.
+
+## Structure Viewer
+
+If a matching file exists under `evidence/structures/`, the HTML report shows a minimal 3D protein viewer in section 2.
+
+- The report currently expects `PDB` files named by protein ID prefix.
+- The selected construct range is highlighted directly on the model.
+- The viewer assumes the PDB residue numbering matches the protein coordinates used elsewhere in the report.
+- The generated HTML currently loads `3Dmol.js` from `https://3Dmol.org/build/3Dmol-min.js` when the report is opened, so internet access is needed unless you vendor that script locally.
 
 ## Run From a Checkout
 

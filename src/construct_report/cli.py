@@ -253,6 +253,7 @@ def build_evidence_for_protein(
     protein_id: str,
     protein_sequence: str,
     evidence_files: list[Path],
+    structure_files: list[Path],
 ) -> dict[str, Any]:
     bundle: dict[str, Any] = {}
 
@@ -290,6 +291,18 @@ def build_evidence_for_protein(
                 parse_structure_file(content),
             )
 
+    matching_structures = sorted(
+        (path for path in structure_files if path.name.startswith(protein_id)),
+        key=lambda path: (path.stem != protein_id, path.name),
+    )
+    if matching_structures:
+        structure_path = matching_structures[0]
+        bundle["structureModel"] = {
+            "format": structure_path.suffix.lstrip(".") or "pdb",
+            "source": structure_path.name,
+            "text": structure_path.read_text(encoding="utf-8"),
+        }
+
     return bundle
 
 
@@ -323,6 +336,11 @@ def load_dataset(
         if evidence_root and evidence_root.exists()
         else []
     )
+    structure_files = (
+        sorted(evidence_root.rglob("*.pdb"))
+        if evidence_root and evidence_root.exists()
+        else []
+    )
 
     entries: list[dict[str, Any]] = []
     for protein_id in sorted(proteins):
@@ -338,7 +356,12 @@ def load_dataset(
                 "cdsSequence": cds_sequence,
                 "mergedDomains": merged_domains.get(protein_id, []),
                 "individualDomains": individual_domains.get(protein_id, []),
-                "evidence": build_evidence_for_protein(protein_id, protein_sequence, evidence_files),
+                "evidence": build_evidence_for_protein(
+                    protein_id,
+                    protein_sequence,
+                    evidence_files,
+                    structure_files,
+                ),
                 "reference": cases.get(protein_id),
             }
         )
@@ -1001,6 +1024,46 @@ def render_html(payload_json: str) -> str:
       background: #f7f7f7;
     }
 
+    .structure-panel {
+      border: 1px solid var(--border-light);
+      background: #fff;
+    }
+
+    .structure-panel-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      padding: 8px 10px;
+      border-bottom: 1px solid var(--border-light);
+      background: #fafafa;
+    }
+
+    .structure-panel-meta {
+      display: flex;
+      gap: 4px;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+    }
+
+    .structure-viewer {
+      height: 340px;
+      background: #fff;
+    }
+
+    .structure-fallback {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 340px;
+      padding: 16px;
+      color: var(--muted);
+      font-size: 11px;
+      text-align: center;
+      border-top: 1px solid var(--border-light);
+      background: #fcfcfc;
+    }
+
     .browser-wrap {
       display: flex;
       flex-direction: column;
@@ -1117,6 +1180,7 @@ def render_html(payload_json: str) -> str:
     </div>
   </main>
 
+  <script src="https://3Dmol.org/build/3Dmol-min.js"></script>
   <script id="report-data" type="application/json">__PAYLOAD__</script>
   <script>
     const payload = JSON.parse(document.getElementById("report-data").textContent);
@@ -1138,12 +1202,17 @@ def render_html(payload_json: str) -> str:
       "-": "#c4c4c4"
     };
     const structuredCodes = new Set(["H", "G", "I", "E", "B", "T"]);
+    const initialEntry =
+      dataset.find((entry) => entry.evidence?.structureModel?.text) ??
+      dataset.find((entry) => Object.keys(entry.evidence || {}).length > 0) ??
+      dataset[0] ??
+      null;
 
     const state = {
       params: { ...defaultParams },
       search: "",
       filter: "all",
-      selectedId: dataset[0]?.id ?? "",
+      selectedId: initialEntry?.id ?? "",
       manualRanges: {},
       showCoordinateDetails: false
     };
@@ -1169,6 +1238,10 @@ def render_html(payload_json: str) -> str:
         .replace(/>/g, "&gt;")
         .replace(/"/g, "&quot;")
         .replace(/'/g, "&#39;");
+    }
+
+    function sanitizeDomId(value) {
+      return String(value).replace(/[^A-Za-z0-9_-]+/g, "-");
     }
 
     function formatRange(range) {
@@ -2012,6 +2085,85 @@ def render_html(payload_json: str) -> str:
       `;
     }
 
+    function renderStructurePanel(entry, activeRange) {
+      const model = entry.evidence.structureModel;
+      if (!model?.text) {
+        return `
+          <div class="structure-panel">
+            <div class="structure-panel-header">
+              <div>
+                <div class="controls-section-label">Structure viewer</div>
+                <div class="detail-section-copy">Local structure model with the selected construct range highlighted.</div>
+              </div>
+              <div class="structure-panel-meta">
+                <span class="metric-chip">no model</span>
+              </div>
+            </div>
+            <div class="structure-fallback">No matching PDB model was found under the evidence <code>structures/</code> directory for this protein.</div>
+          </div>
+        `;
+      }
+
+      return `
+        <div class="structure-panel">
+          <div class="structure-panel-header">
+            <div>
+              <div class="controls-section-label">Structure viewer</div>
+              <div class="detail-section-copy">Local structure model with the selected construct range highlighted.</div>
+            </div>
+            <div class="structure-panel-meta">
+              <span class="metric-chip">${escapeHtml(model.source)}</span>
+              <span class="metric-chip">AA ${escapeHtml(formatRange(activeRange))}</span>
+            </div>
+          </div>
+          <div
+            id="structure-viewer-${sanitizeDomId(entry.id)}"
+            class="structure-viewer"
+            data-structure-viewer
+          ></div>
+        </div>
+      `;
+    }
+
+    function initializeStructureViewer(entry, activeRange) {
+      const viewerEl = detailPanelEl.querySelector("[data-structure-viewer]");
+      const model = entry.evidence.structureModel;
+      if (!viewerEl || !model?.text) {
+        return;
+      }
+
+      if (!window.$3Dmol || typeof window.$3Dmol.createViewer !== "function") {
+        viewerEl.innerHTML = `
+          <div class="structure-fallback">
+            The 3D viewer library did not load. Open the report with internet access to fetch 3Dmol.js, or vendor the script locally for offline viewing.
+          </div>
+        `;
+        return;
+      }
+
+      try {
+        const viewer = window.$3Dmol.createViewer(viewerEl, { backgroundColor: "white" });
+        viewer.addModel(model.text, model.format || "pdb");
+        viewer.setStyle({}, { cartoon: { color: "#d0d0d0" } });
+        viewer.setStyle(
+          { resi: `${activeRange.start}-${activeRange.end}` },
+          {
+            cartoon: { color: selectedRangeColor },
+            stick: { radius: 0.18, color: "#e67e22" }
+          }
+        );
+        viewer.zoomTo();
+        viewer.render();
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        viewerEl.innerHTML = `
+          <div class="structure-fallback">
+            Failed to render the local PDB model: ${escapeHtml(message)}
+          </div>
+        `;
+      }
+    }
+
     function renderSequencePanel(entry, activeRange) {
       const aaStart = activeRange.start - 1;
       const aaEnd = activeRange.end;
@@ -2310,12 +2462,13 @@ def render_html(payload_json: str) -> str:
           <summary class="detail-section-header detail-section-summary">
             <div>
               <div class="detail-section-index">2. Evidence Tracks</div>
-              <div class="detail-section-copy">Mapped conservation and secondary-structure tracks aligned to protein coordinates.</div>
+              <div class="detail-section-copy">Mapped browser tracks and optional local structure models aligned to protein coordinates.</div>
             </div>
             <div class="metric-chip">expand / collapse</div>
           </summary>
           <div class="metadata-body">
             ${renderEvidenceBrowser(entry, activeRange)}
+            ${renderStructurePanel(entry, activeRange)}
             <div class="metadata-note">
               Only tracks that were successfully loaded and mapped onto the current protein sequence are shown here.
             </div>
@@ -2497,6 +2650,7 @@ def render_html(payload_json: str) -> str:
         });
       });
 
+      initializeStructureViewer(entry, activeRange);
       bindTrackDragging();
     }
 
