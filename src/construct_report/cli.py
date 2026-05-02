@@ -81,6 +81,32 @@ CODON_TABLE = {
     "GGG": "G",
 }
 
+PDB_RESIDUE_TO_AA = {
+    "ALA": "A",
+    "ARG": "R",
+    "ASN": "N",
+    "ASP": "D",
+    "CYS": "C",
+    "GLN": "Q",
+    "GLU": "E",
+    "GLY": "G",
+    "HIS": "H",
+    "ILE": "I",
+    "LEU": "L",
+    "LYS": "K",
+    "MET": "M",
+    "MSE": "M",
+    "PHE": "F",
+    "PRO": "P",
+    "SER": "S",
+    "THR": "T",
+    "TRP": "W",
+    "TYR": "Y",
+    "VAL": "V",
+    "SEC": "U",
+    "PYL": "O",
+}
+
 
 def clean_lines(text: str) -> list[str]:
     return [line.strip() for line in text.splitlines() if line.strip()]
@@ -126,14 +152,21 @@ def parse_merged_domains(text: str) -> dict[str, list[dict[str, Any]]]:
 def parse_individual_domains(text: str) -> dict[str, list[dict[str, Any]]]:
     domains: dict[str, list[dict[str, Any]]] = {}
     for line in clean_lines(text):
-        protein_id, start, end, label, _pfam_id, score = line.split("\t")
+        fields = line.split("\t")
+        if len(fields) == 4:
+            protein_id, start, end, label = fields
+            score = None
+        elif len(fields) >= 6:
+            protein_id, start, end, label, _pfam_id, score = fields[:6]
+        else:
+            raise ValueError("Individual domain file must have either 4 or at least 6 tab-separated columns.")
         domains.setdefault(protein_id, []).append(
             {
                 "start": int(start),
                 "end": int(end),
                 "label": label,
-                "source": "domains.individual.tab",
-                "score": float(score),
+                "source": "domains.individual",
+                "score": float(score) if score not in (None, "") else None,
             }
         )
     return domains
@@ -185,6 +218,80 @@ def parse_structure_file(text: str) -> dict[str, Any]:
     sequence = lines[sequence_index + 1] if sequence_index + 1 < len(lines) else ""
     secondary = lines[structure_index + 1] if structure_index + 1 < len(lines) else ""
     return {"sequence": sequence, "values": list(secondary)}
+
+
+def parse_pdb_model(text: str) -> dict[str, Any]:
+    residue_numbers: list[int] = []
+    sequence: list[str] = []
+    seen: set[tuple[str, str, str]] = set()
+
+    for line in text.splitlines():
+        if not line.startswith(("ATOM", "HETATM")):
+            continue
+
+        chain_id = line[21]
+        residue_number_text = line[22:26].strip()
+        insertion_code = line[26]
+        residue_key = (chain_id, residue_number_text, insertion_code)
+        if residue_key in seen:
+            continue
+
+        try:
+            residue_number = int(residue_number_text)
+        except ValueError:
+            continue
+
+        seen.add(residue_key)
+        residue_numbers.append(residue_number)
+        sequence.append(PDB_RESIDUE_TO_AA.get(line[17:20].strip().upper(), "X"))
+
+    return {
+        "residueNumbers": residue_numbers,
+        "sequence": "".join(sequence),
+    }
+
+
+def parse_plddt_file(text: str) -> dict[str, Any]:
+    lines = clean_lines(text)
+    if not lines:
+        raise ValueError("pLDDT file is empty.")
+    header = lines[0].split("\t")
+    if "Positions" not in header or "rank_0" not in header:
+        raise ValueError("pLDDT TSV must have 'Positions' and 'rank_0' columns.")
+    pos_col = header.index("Positions")
+    val_col = header.index("rank_0")
+    positions: list[int] = []
+    values: list[float | None] = []
+    for line in lines[1:]:
+        fields = line.split("\t")
+        try:
+            positions.append(int(fields[pos_col]))
+        except (ValueError, IndexError):
+            continue
+        try:
+            raw = fields[val_col].strip()
+            values.append(float(raw) if raw else None)
+        except (ValueError, IndexError):
+            values.append(None)
+    return {"positions": positions, "values": values}
+
+
+def map_plddt_track(protein_sequence: str, protein_start: int, raw: dict[str, Any]) -> dict[str, Any]:
+    full_values: list[float | None] = [None] * len(protein_sequence)
+    for pos, val in zip(raw["positions"], raw["values"]):
+        idx = protein_start - 1 + (pos - 1)
+        if 0 <= idx < len(full_values):
+            full_values[idx] = val
+    non_null = sum(1 for v in full_values if v is not None)
+    return {
+        "type": "numeric",
+        "label": "pLDDT",
+        "offset": protein_start,
+        "values": full_values,
+        "coverage": non_null / len(protein_sequence) if protein_sequence else 0,
+        "compatible": non_null > 0,
+        "maxValue": 100.0,
+    }
 
 
 def map_numeric_track(protein_sequence: str, label: str, raw_track: dict[str, Any]) -> dict[str, Any]:
@@ -249,11 +356,62 @@ def map_structure_track(protein_sequence: str, label: str, raw_track: dict[str, 
     }
 
 
+def build_structure_model_mapping(
+    protein_sequence: str,
+    model_text: str,
+    local_track: dict[str, Any] | None,
+    fallback_track: dict[str, Any] | None,
+) -> dict[str, Any]:
+    parsed_model = parse_pdb_model(model_text)
+    residue_numbers = parsed_model["residueNumbers"]
+    model_sequence = parsed_model["sequence"]
+    residue_count = len(residue_numbers)
+
+    mapping_track = None
+    for candidate in (local_track, fallback_track):
+        if candidate and candidate.get("compatible") and candidate.get("offset"):
+            mapping_track = candidate
+            break
+
+    protein_start = None
+    mapping_source = None
+    model_length = residue_count
+
+    if mapping_track:
+        protein_start = int(mapping_track["offset"])
+        mapping_source = mapping_track["label"]
+        model_length = min(residue_count, len(mapping_track.get("sequence", "")) or residue_count)
+    elif model_sequence:
+        sequence_offset = locate_sequence(protein_sequence, model_sequence)
+        if sequence_offset:
+            protein_start = sequence_offset
+            mapping_source = "PDB sequence"
+            model_length = min(residue_count, len(model_sequence))
+    elif residue_count == len(protein_sequence):
+        protein_start = 1
+        mapping_source = "full-length fallback"
+        model_length = residue_count
+
+    protein_end = protein_start + model_length - 1 if protein_start and model_length else None
+
+    return {
+        "mappingSource": mapping_source,
+        "proteinStart": protein_start,
+        "proteinEnd": protein_end,
+        "modelLength": model_length,
+        "residueCount": residue_count,
+        "residueStart": residue_numbers[0] if residue_numbers else None,
+        "residueEnd": residue_numbers[model_length - 1] if residue_numbers and model_length else None,
+        "residueNumbers": residue_numbers[:model_length] if model_length else [],
+    }
+
+
 def build_evidence_for_protein(
     protein_id: str,
     protein_sequence: str,
     evidence_files: list[Path],
     structure_files: list[Path],
+    plddt_files: list[Path] | None = None,
 ) -> dict[str, Any]:
     bundle: dict[str, Any] = {}
 
@@ -297,23 +455,49 @@ def build_evidence_for_protein(
     )
     if matching_structures:
         structure_path = matching_structures[0]
+        structure_text = structure_path.read_text(encoding="utf-8")
         bundle["structureModel"] = {
             "format": structure_path.suffix.lstrip(".") or "pdb",
             "source": structure_path.name,
-            "text": structure_path.read_text(encoding="utf-8"),
+            "text": structure_text,
+            "mapping": build_structure_model_mapping(
+                protein_sequence,
+                structure_text,
+                bundle.get("structureDssp"),
+                bundle.get("structureUniprot"),
+            ),
         }
+
+    if plddt_files:
+        matching_plddt = sorted(
+            (
+                path
+                for path in plddt_files
+                if path.name.startswith(protein_id) and path.parent.name == "structures"
+            ),
+            key=lambda path: (path.stem != protein_id, path.name),
+        )
+        if matching_plddt:
+            try:
+                raw_plddt = parse_plddt_file(matching_plddt[0].read_text(encoding="utf-8"))
+                protein_start = (
+                    bundle.get("structureModel", {}).get("mapping", {}).get("proteinStart") or 1
+                )
+                bundle["plddt"] = map_plddt_track(protein_sequence, protein_start, raw_plddt)
+            except (ValueError, KeyError):
+                pass
 
     return bundle
 
 
-def load_dataset(
+def load_dataset_bundle(
     pep_path: Path,
     cds_path: Path,
     domains_path: Path | None,
     domains_individual_path: Path | None = None,
     cases_path: Path | None = None,
     evidence_root: Path | None = None,
-) -> list[dict[str, Any]]:
+) -> dict[str, Any]:
     proteins = parse_fasta(pep_path.read_text(encoding="utf-8"))
     cds = parse_fasta(cds_path.read_text(encoding="utf-8"))
     merged_domains = (
@@ -341,9 +525,31 @@ def load_dataset(
         if evidence_root and evidence_root.exists()
         else []
     )
+    plddt_files = (
+        sorted(evidence_root.rglob("*.tsv"))
+        if evidence_root and evidence_root.exists()
+        else []
+    )
+    protein_ids = set(proteins)
+    cds_ids = set(cds)
+    shared_ids = protein_ids & cds_ids
+    allowed_protein_ids = set(individual_domains) if individual_domains else None
+    evidence_track_ids = {
+        protein_id
+        for protein_id in protein_ids
+        if any(path.name.startswith(protein_id) for path in evidence_files)
+    }
+    structure_model_ids = {
+        protein_id
+        for protein_id in protein_ids
+        if any(path.name.startswith(protein_id) for path in structure_files)
+    }
 
     entries: list[dict[str, Any]] = []
     for protein_id in sorted(proteins):
+        if allowed_protein_ids is not None and protein_id not in allowed_protein_ids:
+            continue
+
         cds_sequence = cds.get(protein_id)
         if not cds_sequence:
             continue
@@ -361,12 +567,58 @@ def load_dataset(
                     protein_sequence,
                     evidence_files,
                     structure_files,
+                    plddt_files,
                 ),
                 "reference": cases.get(protein_id),
             }
         )
 
-    return entries
+    summary = {
+        "pepRecords": len(proteins),
+        "cdsRecords": len(cds),
+        "sharedPepCds": len(shared_ids),
+        "pepWithoutCds": len(protein_ids - cds_ids),
+        "cdsWithoutPep": len(cds_ids - protein_ids),
+        "mergedDomainProteins": len(merged_domains),
+        "individualDomainProteins": len(individual_domains),
+        "filterRequiresIndividualDomains": allowed_protein_ids is not None,
+        "excludedByIndividualDomains": len(shared_ids - allowed_protein_ids) if allowed_protein_ids is not None else 0,
+        "evidenceTrackFiles": len(evidence_files),
+        "structureModelFiles": len(structure_files),
+        "evidenceTrackProteins": len(evidence_track_ids),
+        "structureModelProteins": len(structure_model_ids),
+        "evidenceProteinsAny": len(evidence_track_ids | structure_model_ids),
+        "keptProteins": len(entries),
+        "keptWithAnyEvidence": sum(1 for entry in entries if entry["evidence"]),
+        "keptWithTrackEvidence": sum(
+            1
+            for entry in entries
+            if any(key != "structureModel" for key in entry["evidence"])
+        ),
+        "keptWithStructureModels": sum(
+            1 for entry in entries if entry["evidence"].get("structureModel")
+        ),
+    }
+
+    return {"entries": entries, "summary": summary}
+
+
+def load_dataset(
+    pep_path: Path,
+    cds_path: Path,
+    domains_path: Path | None,
+    domains_individual_path: Path | None = None,
+    cases_path: Path | None = None,
+    evidence_root: Path | None = None,
+) -> list[dict[str, Any]]:
+    return load_dataset_bundle(
+        pep_path=pep_path,
+        cds_path=cds_path,
+        domains_path=domains_path,
+        domains_individual_path=domains_individual_path,
+        cases_path=cases_path,
+        evidence_root=evidence_root,
+    )["entries"]
 
 
 def resolve_path(base_dir: Path, value: str | None) -> Path | None:
@@ -384,6 +636,47 @@ def format_path_for_display(path: Path, base_dir: Path) -> str:
         return str(path.relative_to(base_dir))
     except ValueError:
         return str(path)
+
+
+def summarize_dataset_for_display(summary: dict[str, Any]) -> str:
+    parts = [
+        f"pep {summary['pepRecords']}",
+        f"cds {summary['cdsRecords']}",
+        f"shared {summary['sharedPepCds']}",
+        f"kept {summary['keptProteins']}",
+    ]
+    if summary["evidenceProteinsAny"] or summary["evidenceTrackFiles"] or summary["structureModelFiles"]:
+        parts.append(f"evidence {summary['evidenceProteinsAny']}")
+    if summary["keptWithStructureModels"]:
+        parts.append(f"structures {summary['keptWithStructureModels']}")
+    return " | ".join(parts)
+
+
+def format_run_summary_lines(summary: dict[str, Any]) -> list[str]:
+    lines = [
+        "Dataset summary:",
+        f"  pep records: {summary['pepRecords']}",
+        f"  cds records: {summary['cdsRecords']}",
+        f"  pep+cds overlap: {summary['sharedPepCds']}",
+        f"  pep without cds: {summary['pepWithoutCds']}",
+        f"  cds without pep: {summary['cdsWithoutPep']}",
+        f"  merged-domain proteins: {summary['mergedDomainProteins']}",
+        f"  individual-domain proteins: {summary['individualDomainProteins']}",
+        (
+            "  individual-domain filter: on"
+            if summary["filterRequiresIndividualDomains"]
+            else "  individual-domain filter: off"
+        ),
+        f"  excluded by individual domains: {summary['excludedByIndividualDomains']}",
+        f"  evidence track files: {summary['evidenceTrackFiles']}",
+        f"  structure model files: {summary['structureModelFiles']}",
+        f"  proteins referenced by evidence: {summary['evidenceProteinsAny']}",
+        f"  proteins kept: {summary['keptProteins']}",
+        f"  kept with any evidence: {summary['keptWithAnyEvidence']}",
+        f"  kept with track evidence: {summary['keptWithTrackEvidence']}",
+        f"  kept with structure models: {summary['keptWithStructureModels']}",
+    ]
+    return lines
 
 
 def render_html(payload_json: str) -> str:
@@ -1024,38 +1317,56 @@ def render_html(payload_json: str) -> str:
       background: #f7f7f7;
     }
 
+    .structure-pane-wrap {
+      display: flex;
+      flex-direction: column;
+      align-items: stretch;
+      gap: 8px;
+      width: 100%;
+    }
+
     .structure-panel {
+      position: relative;
+      display: flex;
+      flex-direction: column;
+      width: 100%;
+      height: 460px;
       border: 1px solid var(--border-light);
       background: #fff;
+      box-shadow: var(--shadow);
+      overflow: hidden;
+      flex: 0 0 auto;
     }
 
-    .structure-panel-header {
+    .structure-pane-meta {
       display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 8px;
-      padding: 8px 10px;
-      border-bottom: 1px solid var(--border-light);
-      background: #fafafa;
-    }
-
-    .structure-panel-meta {
-      display: flex;
-      gap: 4px;
+      gap: 6px;
       flex-wrap: wrap;
-      justify-content: flex-end;
+      justify-content: center;
     }
 
     .structure-viewer {
-      height: 340px;
+      position: relative;
+      flex: 1 1 auto;
+      width: 100%;
+      height: 100%;
+      min-height: 0;
       background: #fff;
+      overflow: hidden;
+    }
+
+    .structure-viewer canvas {
+      display: block;
+      width: 100% !important;
+      height: 100% !important;
     }
 
     .structure-fallback {
       display: flex;
       align-items: center;
       justify-content: center;
-      min-height: 340px;
+      flex: 1 1 auto;
+      min-height: 0;
       padding: 16px;
       color: var(--muted);
       font-size: 11px;
@@ -1168,6 +1479,10 @@ def render_html(payload_json: str) -> str:
         flex-direction: column;
         align-items: stretch;
       }
+
+      .structure-panel {
+        height: 360px;
+      }
     }
   </style>
 </head>
@@ -1185,6 +1500,7 @@ def render_html(payload_json: str) -> str:
   <script>
     const payload = JSON.parse(document.getElementById("report-data").textContent);
     const dataset = payload.dataset;
+    const datasetSummary = payload.datasetSummary;
     const defaultParams = payload.defaultParams;
     const codonTable = payload.codonTable;
     const trackPalette = ["#e8b84b", "#3a85c8", "#27ae60", "#9b59b6", "#e74c3c", "#1abc9c", "#d4943a", "#2868a0"];
@@ -1200,6 +1516,17 @@ def render_html(payload_json: str) -> str:
       S: "#d4943a",
       P: "#7a8f60",
       "-": "#c4c4c4"
+    };
+    const ssNames = {
+      H: "alpha helix",
+      G: "3-10 helix",
+      I: "pi helix",
+      E: "extended strand",
+      B: "isolated beta bridge",
+      T: "turn",
+      S: "bend",
+      P: "polyproline helix",
+      "-": "coil / unassigned"
     };
     const structuredCodes = new Set(["H", "G", "I", "E", "B", "T"]);
     const initialEntry =
@@ -1421,6 +1748,67 @@ def render_html(payload_json: str) -> str:
       }
 
       return runs;
+    }
+
+    function structureTypeName(code) {
+      if (code === null || code === undefined) {
+        return "no assignment";
+      }
+      return ssNames[code] ?? `other (${code})`;
+    }
+
+    function getStructureSelection(entry, activeRange) {
+      const model = entry.evidence.structureModel;
+      const mapping = model?.mapping;
+      if (!model?.text || !mapping) {
+        return {
+          hasMapping: false,
+          hasOverlap: false,
+          proteinRange: null,
+          residueRange: null
+        };
+      }
+
+      const proteinStart = Number(mapping.proteinStart);
+      const proteinEnd = Number(mapping.proteinEnd);
+      const residueNumbers = Array.isArray(mapping.residueNumbers) ? mapping.residueNumbers : [];
+      if (!proteinStart || !proteinEnd || !residueNumbers.length) {
+        return {
+          hasMapping: false,
+          hasOverlap: false,
+          proteinRange: null,
+          residueRange: null
+        };
+      }
+
+      const overlapStart = Math.max(activeRange.start, proteinStart);
+      const overlapEnd = Math.min(activeRange.end, proteinEnd);
+      if (overlapStart > overlapEnd) {
+        return {
+          hasMapping: true,
+          hasOverlap: false,
+          proteinRange: { start: proteinStart, end: proteinEnd },
+          residueRange: null,
+          mappingSource: mapping.mappingSource ?? null
+        };
+      }
+
+      const localStartIndex = overlapStart - proteinStart;
+      const localEndIndex = overlapEnd - proteinStart;
+      const residueStart = residueNumbers[localStartIndex] ?? null;
+      const residueEnd = residueNumbers[localEndIndex] ?? null;
+
+      return {
+        hasMapping: true,
+        hasOverlap: residueStart !== null && residueEnd !== null,
+        proteinRange: { start: proteinStart, end: proteinEnd },
+        overlapRange: { start: overlapStart, end: overlapEnd },
+        residueRange:
+          residueStart !== null && residueEnd !== null
+            ? { start: residueStart, end: residueEnd }
+            : null,
+        mappingSource: mapping.mappingSource ?? null
+      };
     }
 
     function buildAreaPath(values, xPos, top, height, maxValue = 1) {
@@ -1953,6 +2341,18 @@ def render_html(payload_json: str) -> str:
           stroke: "#1f7a45"
         });
       }
+      if (entry.evidence.plddt?.compatible) {
+        availableTracks.push({
+          type: "numeric",
+          label: "pLDDT",
+          coverage: entry.evidence.plddt.coverage,
+          values: entry.evidence.plddt.values,
+          height: 40,
+          fill: "rgba(215,150,0,0.25)",
+          stroke: "#c47d00",
+          maxValue: entry.evidence.plddt.maxValue ?? 100
+        });
+      }
 
       if (!availableTracks.length) {
         return `<div class="browser-empty">No compatible evidence tracks are available for this protein.</div>`;
@@ -2041,17 +2441,22 @@ def render_html(payload_json: str) -> str:
             const x = xPos(run.start + 1);
             const width = Math.max(2, (run.end - run.start + 1) * residueWidth);
             const color = ssColors[run.value] ?? "#bbbbbb";
+            const tooltip = `${track.label}: ${structureTypeName(run.value)} (${run.value}), aa ${run.start + 1}-${run.end + 1}`;
             svg.push(
-              `<rect x="${x}" y="${y + 4}" width="${width}" height="${track.height - 8}" fill="${color}" rx="1" />`
+              `<rect x="${x}" y="${y + 4}" width="${width}" height="${track.height - 8}" fill="${color}" rx="1">` +
+                `<title>${escapeHtml(tooltip)}</title>` +
+              `</rect>`
             );
           });
         } else {
           const trackTop = y + 4;
           const trackHeight = track.height - 8;
-          const maxValue = Math.max(
-            1,
-            ...track.values.filter((value) => value !== null && value !== undefined).map(Number)
-          );
+          const maxValue = track.maxValue != null
+            ? track.maxValue
+            : Math.max(
+                1,
+                ...track.values.filter((value) => value !== null && value !== undefined).map(Number)
+              );
           const areaPath = buildAreaPath(track.values, xPos, trackTop, trackHeight, maxValue);
           if (areaPath) {
             svg.push(
@@ -2078,7 +2483,7 @@ def render_html(payload_json: str) -> str:
             <span class="browser-legend-item"><span class="browser-legend-swatch browser-legend-helix"></span>helix / structured helix-like</span>
             <span class="browser-legend-item"><span class="browser-legend-swatch browser-legend-strand"></span>strand / sheet-like</span>
             <span class="browser-legend-item"><span class="browser-legend-swatch browser-legend-coil"></span>coil / turn classes</span>
-            <span class="browser-legend-item"><span class="browser-legend-swatch browser-legend-numeric"></span>numeric conservation track</span>
+            <span class="browser-legend-item"><span class="browser-legend-swatch browser-legend-numeric"></span>numeric track (conservation / pLDDT 0–100)</span>
             <span class="browser-legend-item"><span class="browser-legend-swatch browser-legend-range"></span>selected construct span</span>
           </div>
         </div>
@@ -2088,39 +2493,40 @@ def render_html(payload_json: str) -> str:
     function renderStructurePanel(entry, activeRange) {
       const model = entry.evidence.structureModel;
       if (!model?.text) {
-        return `
-          <div class="structure-panel">
-            <div class="structure-panel-header">
-              <div>
-                <div class="controls-section-label">Structure viewer</div>
-                <div class="detail-section-copy">Local structure model with the selected construct range highlighted.</div>
-              </div>
-              <div class="structure-panel-meta">
-                <span class="metric-chip">no model</span>
-              </div>
-            </div>
-            <div class="structure-fallback">No matching PDB model was found under the evidence <code>structures/</code> directory for this protein.</div>
-          </div>
-        `;
+        return "";
       }
+      const selection = getStructureSelection(entry, activeRange);
 
       return `
-        <div class="structure-panel">
-          <div class="structure-panel-header">
-            <div>
-              <div class="controls-section-label">Structure viewer</div>
-              <div class="detail-section-copy">Local structure model with the selected construct range highlighted.</div>
-            </div>
-            <div class="structure-panel-meta">
-              <span class="metric-chip">${escapeHtml(model.source)}</span>
-              <span class="metric-chip">AA ${escapeHtml(formatRange(activeRange))}</span>
-            </div>
+        <div class="structure-pane-wrap">
+          <div class="structure-pane-meta">
+            <span class="metric-chip">AA ${escapeHtml(formatRange(activeRange))}</span>
+            ${
+              selection.hasMapping && selection.proteinRange
+                ? `<span class="metric-chip">model aa ${escapeHtml(formatRange(selection.proteinRange))}</span>`
+                : `<span class="metric-chip">model mapping unavailable</span>`
+            }
+            ${
+              selection.mappingSource
+                ? `<span class="metric-chip">mapped by ${escapeHtml(selection.mappingSource)}</span>`
+                : ""
+            }
+            ${
+              selection.hasOverlap && selection.overlapRange
+                ? `<span class="metric-chip">shown ${escapeHtml(formatRange(selection.overlapRange))}</span>`
+                : selection.hasMapping
+                  ? `<span class="metric-chip">no overlap with selected range</span>`
+                  : ""
+            }
+            <span class="metric-chip">${escapeHtml(model.source)}</span>
           </div>
-          <div
-            id="structure-viewer-${sanitizeDomId(entry.id)}"
-            class="structure-viewer"
-            data-structure-viewer
-          ></div>
+          <div class="structure-panel">
+            <div
+              id="structure-viewer-${sanitizeDomId(entry.id)}"
+              class="structure-viewer"
+              data-structure-viewer
+            ></div>
+          </div>
         </div>
       `;
     }
@@ -2145,14 +2551,17 @@ def render_html(payload_json: str) -> str:
         const viewer = window.$3Dmol.createViewer(viewerEl, { backgroundColor: "white" });
         viewer.addModel(model.text, model.format || "pdb");
         viewer.setStyle({}, { cartoon: { color: "#d0d0d0" } });
-        viewer.setStyle(
-          { resi: `${activeRange.start}-${activeRange.end}` },
-          {
-            cartoon: { color: selectedRangeColor },
-            stick: { radius: 0.18, color: "#e67e22" }
-          }
-        );
-        viewer.zoomTo();
+        const selection = getStructureSelection(entry, activeRange);
+        if (selection.hasOverlap && selection.residueRange) {
+          viewer.setStyle(
+            { resi: `${selection.residueRange.start}-${selection.residueRange.end}` },
+            { cartoon: { color: "#d94f43" } }
+          );
+          viewer.zoomTo({ resi: `${selection.residueRange.start}-${selection.residueRange.end}` });
+        } else {
+          viewer.zoomTo();
+        }
+        viewer.resize();
         viewer.render();
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
@@ -2233,6 +2642,7 @@ def render_html(payload_json: str) -> str:
         <div class="app-toolbar-title">
           <strong>Construct Design HTML Report</strong>
           <span>Required inputs: protein FASTA, CDS FASTA, optional domain BED</span>
+          <span>Records: ${escapeHtml(datasetSummary.display)}</span>
           <span>Inputs: ${escapeHtml(payload.inputSummary)} · generated ${escapeHtml(payload.generatedAt)}</span>
         </div>
         <div class="app-toolbar-actions">
@@ -2335,6 +2745,7 @@ def render_html(payload_json: str) -> str:
           : "";
       const aaLen = activeRange.end - activeRange.start + 1;
       const cdsLen = construct.cds.length;
+      const hasStructureModel = Boolean(entry.evidence.structureModel?.text);
       const coordinateDetailsLabel = state.showCoordinateDetails ? "hide lower details" : "show lower details";
       detailPanelEl.innerHTML = `
         <div class="detail-header">
@@ -2462,13 +2873,12 @@ def render_html(payload_json: str) -> str:
           <summary class="detail-section-header detail-section-summary">
             <div>
               <div class="detail-section-index">2. Evidence Tracks</div>
-              <div class="detail-section-copy">Mapped browser tracks and optional local structure models aligned to protein coordinates.</div>
+              <div class="detail-section-copy">Mapped browser tracks aligned to protein coordinates.</div>
             </div>
             <div class="metric-chip">expand / collapse</div>
           </summary>
           <div class="metadata-body">
             ${renderEvidenceBrowser(entry, activeRange)}
-            ${renderStructurePanel(entry, activeRange)}
             <div class="metadata-note">
               Only tracks that were successfully loaded and mapped onto the current protein sequence are shown here.
             </div>
@@ -2487,10 +2897,29 @@ def render_html(payload_json: str) -> str:
           </div>
         </details>
 
+        ${
+          hasStructureModel
+            ? `
+              <details class="detail-section" open>
+                <summary class="detail-section-header detail-section-summary">
+                  <div>
+                    <div class="detail-section-index">3. Structure</div>
+                    <div class="detail-section-copy">Local protein structure with the selected construct range highlighted in red.</div>
+                  </div>
+                  <div class="metric-chip">expand / collapse</div>
+                </summary>
+                <div class="metadata-body">
+                  ${renderStructurePanel(entry, activeRange)}
+                </div>
+              </details>
+            `
+            : ""
+        }
+
         <details class="detail-section" open>
           <summary class="detail-section-header detail-section-summary">
             <div>
-              <div class="detail-section-index">3. Construct Summary</div>
+              <div class="detail-section-index">${hasStructureModel ? "4" : "3"}. Construct Summary</div>
               <div class="detail-section-copy">Final selected AA/CDS span, QC summary, and export preview.</div>
             </div>
             <div class="section-chip-row">
@@ -2721,7 +3150,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--domains-individual",
         dest="domains_individual",
-        help="Optional per-domain TSV path. Defaults to <input-dir>/domains.individual.tab when present.",
+        help="Optional per-domain BED/TSV path. Defaults to <input-dir>/domains.individual.bed when present, otherwise <input-dir>/domains.individual.tab.",
     )
     parser.add_argument(
         "--cases",
@@ -2787,7 +3216,15 @@ def main() -> None:
     domains_individual_path = (
         resolve_path(cwd, args.domains_individual)
         if args.domains_individual
-        else (None if primary_explicit else input_dir / "domains.individual.tab")
+        else (
+            None
+            if primary_explicit
+            else (
+                (input_dir / "domains.individual.bed")
+                if (input_dir / "domains.individual.bed").exists()
+                else (input_dir / "domains.individual.tab")
+            )
+        )
     )
     cases_path = (
         resolve_path(cwd, args.cases)
@@ -2818,7 +3255,7 @@ def main() -> None:
         "nTerminalSnapThreshold": max(1, args.n_terminal_snap_threshold),
     }
 
-    dataset = load_dataset(
+    dataset_bundle = load_dataset_bundle(
         pep_path=pep_path,
         cds_path=cds_path,
         domains_path=domains_path,
@@ -2826,6 +3263,8 @@ def main() -> None:
         cases_path=cases_path,
         evidence_root=evidence_root,
     )
+    dataset = dataset_bundle["entries"]
+    dataset_summary = dataset_bundle["summary"]
     explicit_sources = any(
         value is not None
         for value in (
@@ -2851,6 +3290,10 @@ def main() -> None:
 
     payload = {
         "dataset": dataset,
+        "datasetSummary": {
+            "counts": dataset_summary,
+            "display": summarize_dataset_for_display(dataset_summary),
+        },
         "defaultParams": params,
         "codonTable": CODON_TABLE,
         "inputSummary": input_summary,
@@ -2862,6 +3305,8 @@ def main() -> None:
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(html_text, encoding="utf-8")
     print(f"Wrote {output_path}")
+    for line in format_run_summary_lines(dataset_summary):
+        print(line)
 
 
 if __name__ == "__main__":

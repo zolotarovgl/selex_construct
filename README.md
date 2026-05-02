@@ -28,7 +28,7 @@ The minimal inputs are:
 Optional inputs:
 
 - `--domains`: domain BED in protein coordinates
-- `--domains-individual`: optional per-domain TSV
+- `--domains-individual`: optional per-domain BED/TSV
 - `--cases`: optional reference/QC table
 - `--evidence-dir`: optional evidence directory with subfolders such as `conservation/`, `conservation_full/`, `structure_uniprot/`, and `structure_dssp/`
 
@@ -37,6 +37,7 @@ Current assumptions:
 - Protein and CDS IDs should match exactly.
 - Domain intervals are amino-acid coordinates, not genomic coordinates.
 - Evidence tracks are mapped only by exact full-sequence match or exact substring placement.
+- If `--domains-individual` is provided and contains any hits, the report includes only proteins that appear in that file.
 
 ## Evidence Directory Layout
 
@@ -100,11 +101,12 @@ If you add a new evidence type, it will not appear automatically until those cod
 
 ## Structure Viewer
 
-If a matching file exists under `evidence/structures/`, the HTML report shows a minimal 3D protein viewer in section 2.
+If a matching file exists under `evidence/structures/`, the HTML report shows a dedicated 3D protein viewer section below the evidence tracks.
 
 - The report currently expects `PDB` files named by protein ID prefix.
-- The selected construct range is highlighted directly on the model.
-- The viewer assumes the PDB residue numbering matches the protein coordinates used elsewhere in the report.
+- The selected construct range is highlighted only across the part of the model that maps back onto the full protein coordinates.
+- Local DSSP mapping is used first for that protein-to-model coordinate mapping, because the structure may cover only a subsequence of the full protein.
+- The viewer uses the local model residue numbering only after translating the selected full-protein range through that mapping.
 - The generated HTML currently loads `3Dmol.js` from `https://3Dmol.org/build/3Dmol-min.js` when the report is opened, so internet access is needed unless you vendor that script locally.
 
 ## Run From a Checkout
@@ -115,11 +117,13 @@ From this directory:
 python3 generate_report.py \
   --pep examples/proteins.fasta \
   --cds examples/cds.fasta \
-  --domains examples/domains.individual.tab \
+  --domains-individual examples/domains.individual.bed \
   --evidence-dir examples/evidence 
 ```
 
 If you omit explicit inputs, the tool defaults to the bundled `examples/` folder. If you omit `--output`, it writes `report.html` to your current working directory.
+
+On each run, the script prints a dataset summary to the terminal, including how many proteins were found in the peptide FASTA, CDS FASTA, domain inputs, evidence directory, and how many were ultimately kept in the report.
 
 ## Installable CLI
 
@@ -130,7 +134,7 @@ python3 -m pip install -e .
 construct-report \
   --pep examples/proteins.fasta \
   --cds examples/cds.fasta \
-  --domains examples/domains.bed \
+  --domains-individual examples/domains.individual.bed \
   --evidence-dir examples/evidence \
   --output report.html
 ```
@@ -219,6 +223,10 @@ Notes:
 --- 
 
 # DEV: Structures   
+
+
+To see the structures, add the structure .pdb files to the `examples/eviddence/structures/` directory with each pdb file named as `ID.pdb`. 
+
 
 Gather the locally folded structures to test the structure display: 
 ```bash
