@@ -49,12 +49,15 @@ Most orchestration now lives across `src/construct_report/cli.py`, `ranges.py`, 
 evidence/
   conservation/          # per-residue conservation scores, domain alignment
   conservation_full/     # per-residue conservation scores, full-length alignment
+  iupred/                # local IUPred disorder scores (.out)
   structure_dssp/        # DSSP secondary structure strings from local AlphaFold models
   structure_uniprot/     # UniProt secondary structure strings
   structures/            # AlphaFold PDB models (.pdb) and pLDDT score tables (.tsv)
 ```
 
 Files are matched to proteins by prefix: a file is used for protein `ID` if `file.name.startswith(ID)`. Malformed or empty files emit a WARNING to stderr and are skipped — they do not crash the run.
+
+The current report code consumes `conservation/`, `conservation_full/`, `iupred/`, `structure_dssp/`, `structure_uniprot/`, and `structures/`.
 
 ### Evidence File Formats
 
@@ -64,6 +67,30 @@ SEQUENCE
 [ALIGNMENT-WITH-GAPS]    # optional; gaps stripped before score mapping
 0.61,0.85,0.79,...       # comma-separated floats
 ```
+
+**`iupred/`** — one tab-separated line per protein:
+```
+SEQUENCE<TAB>0.2764,0.2680,0.2680,...
+```
+
+- Column 1: the ungapped protein sequence passed to IUPred.
+- Column 2: comma-separated per-residue IUPred scores in sequence order.
+- The number of scores must equal the sequence length.
+
+These files were produced locally from `../../iupred/results/*.out`, based on the command sequence documented in `../../iupred/README.md`. The local wrapper splits the input FASTA into one sequence per file, runs:
+```bash
+python "$IUPRED" "$FILE" long
+```
+and then collapses the raw per-residue output into the compact on-disk format used here:
+```bash
+python "$IUPRED" "$FILE" long \
+  | grep -v '#' \
+  | awk '{s=s $2; sc=sc $3 ","} END{print s "\t" substr(sc,1,length(sc)-1)}'
+```
+
+For the bundled examples, only files whose basename matches a protein ID in the example FASTA were copied:
+- `examples/fulldata/evidence/iupred/`: 657 matching proteins
+- `examples/test/evidence/iupred/`: 81 matching proteins
 
 **`structure_dssp/` and `structure_uniprot/`** — FASTA-like:
 ```
@@ -169,12 +196,14 @@ The report has three panels: **Toolbar** (top), **Batch list** (left), **Detail 
 A scrollable list of all proteins in the report. Each row shows:
 - **Protein ID** (bold).
 - **Evidence badges** (top-right of row): four colored square badges indicating what data is loaded for that protein:
+- **Evidence badges** (top-right of row): colored square badges indicating what data is loaded for that protein:
 
   | Badge | Meaning | Green | Amber | Gray |
   |-------|---------|-------|-------|------|
   | `3D` | AlphaFold PDB model | present | — | absent |
   | `SS` | Secondary structure (DSSP) | DSSP, full coverage | DSSP, partial coverage OR UniProt-only | absent |
   | `CN` | Conservation track | any conservation loaded | — | absent |
+  | `ID` | IUPred disorder track | present | — | absent |
   | `pL` | pLDDT scores | present | — | absent |
 
 - **Domain summary** (below ID): comma-separated individual domain labels, or merged domain labels, or "no domains".
@@ -211,7 +240,8 @@ SVG track browser showing per-residue evidence aligned to the full protein seque
 3. UniProt secondary structure (if compatible).
 4. Full-length conservation (blue area, if compatible).
 5. Domain conservation / DBD (green area, if compatible).
-6. pLDDT scores (amber area, fixed 0–100 scale, if compatible).
+6. IUPred disorder (gray area, fixed 0–1 scale, if compatible).
+7. pLDDT scores (amber area, fixed 0–100 scale, if compatible).
 
 The active range is highlighted as a shaded rectangle with vertical boundary lines.
 

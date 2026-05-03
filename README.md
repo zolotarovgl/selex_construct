@@ -30,6 +30,12 @@ construct-report \
   --output report.html
 ```
 
+# TODOs:  
+
+- a dedicated pipeline for the evidence generation
+- conservation scores - full and dbd 
+- ConSurf (https://github.com/Rostlab/ConSurf) - basically, implements the conservation profiles that I did for the conservation_full. 
+
 
 # Manual   
 

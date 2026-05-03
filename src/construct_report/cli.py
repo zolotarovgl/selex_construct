@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -13,7 +14,6 @@ from construct_report.pipeline import (
     compute_constructs,
     write_constructs_fasta,
     write_constructs_tsv,
-    write_dataset_json,
 )
 from construct_report.report import report_from_bundle
 
@@ -195,6 +195,122 @@ def parse_cases(text: str) -> dict[str, dict[str, str]]:
     return rows
 
 
+def parse_custom_ranges(text: str) -> dict[str, list[dict[str, Any]]]:
+    lines = clean_lines(text)
+    if not lines:
+        return {}
+
+    id_fields = {"gene", "id", "protein_id", "protein", "sequence_id", "seqid"}
+    range_fields = {"range", "picked_range", "construct_range", "aa_range", "custom_range"}
+    start_fields = {"start", "aa_start"}
+    end_fields = {"end", "aa_end"}
+    label_fields = {"label", "name", "source", "recommended", "range_name", "picked_range_name"}
+    missing_values = {"", "na", "n/a", "none", "null", "."}
+
+    def is_missing(value: str) -> bool:
+        return value.strip().lower() in missing_values
+
+    def parse_range_text(value: str, line_number: int) -> tuple[int, int]:
+        match = re.match(r"^\s*(\d+)\s*-\s*(\d+)\s*$", value)
+        if not match:
+            raise ValueError(f"Invalid range {value!r} on line {line_number}. Expected START-END.")
+        start, end = int(match.group(1)), int(match.group(2))
+        if end < start:
+            raise ValueError(f"Invalid range {value!r} on line {line_number}. End precedes start.")
+        return start, end
+
+    def add_entry(
+        rows: dict[str, list[dict[str, Any]]],
+        protein_id: str,
+        start: int,
+        end: int,
+        label: str | None,
+    ) -> None:
+        rows.setdefault(protein_id, []).append(
+            {
+                "start": start,
+                "end": end,
+                "label": label or "custom range",
+            }
+        )
+
+    header_fields = [field.strip().lower() for field in lines[0].split("\t")]
+    has_header = any(
+        field in id_fields | range_fields | start_fields | end_fields | label_fields
+        for field in header_fields
+    )
+    rows: dict[str, list[dict[str, Any]]] = {}
+
+    if has_header:
+        id_index = next((i for i, field in enumerate(header_fields) if field in id_fields), None)
+        range_index = next((i for i, field in enumerate(header_fields) if field in range_fields), None)
+        start_index = next((i for i, field in enumerate(header_fields) if field in start_fields), None)
+        end_index = next((i for i, field in enumerate(header_fields) if field in end_fields), None)
+        label_index = next((i for i, field in enumerate(header_fields) if field in label_fields), None)
+
+        if id_index is None:
+            raise ValueError("Custom ranges header is missing an ID column.")
+        if range_index is None and (start_index is None or end_index is None):
+            raise ValueError(
+                "Custom ranges header must contain either a range column or both start/end columns."
+            )
+
+        for line_number, line in enumerate(lines[1:], start=2):
+            fields = line.split("\t")
+            protein_id = fields[id_index].strip() if id_index < len(fields) else ""
+            if not protein_id:
+                continue
+
+            label = (
+                fields[label_index].strip()
+                if label_index is not None and label_index < len(fields)
+                else None
+            )
+            range_value = fields[range_index].strip() if range_index is not None and range_index < len(fields) else ""
+            start_value = fields[start_index].strip() if start_index is not None and start_index < len(fields) else ""
+            end_value = fields[end_index].strip() if end_index is not None and end_index < len(fields) else ""
+
+            if not is_missing(range_value):
+                start, end = parse_range_text(range_value, line_number)
+            else:
+                if is_missing(start_value) and is_missing(end_value):
+                    continue
+                if is_missing(start_value) or is_missing(end_value):
+                    raise ValueError(f"Custom ranges line {line_number} is missing start/end values.")
+                start = int(start_value)
+                end = int(end_value)
+                if end < start:
+                    raise ValueError(f"Custom ranges line {line_number} has end before start.")
+            add_entry(rows, protein_id, start, end, label)
+
+        return rows
+
+    for line_number, line in enumerate(lines, start=1):
+        fields = line.split("\t")
+        if len(fields) < 2:
+            raise ValueError(
+                f"Custom ranges line {line_number} must have at least 2 tab-separated fields."
+            )
+
+        protein_id = fields[0].strip()
+        if not protein_id:
+            continue
+
+        if len(fields) >= 3 and fields[1].strip().isdigit() and fields[2].strip().isdigit():
+            start = int(fields[1].strip())
+            end = int(fields[2].strip())
+            if end < start:
+                raise ValueError(f"Custom ranges line {line_number} has end before start.")
+            label = fields[3].strip() if len(fields) >= 4 and fields[3].strip() else None
+        else:
+            start, end = parse_range_text(fields[1].strip(), line_number)
+            label = fields[2].strip() if len(fields) >= 3 and fields[2].strip() else None
+
+        add_entry(rows, protein_id, start, end, label)
+
+    return rows
+
+
 def locate_sequence(target: str, query: str) -> int | None:
     if target == query:
         return 1
@@ -221,6 +337,36 @@ def parse_conservation_file(text: str) -> dict[str, Any]:
     raw_scores = [float(value) for value in lines[2].split(",")]
     values = [score for score, residue in zip(raw_scores, alignment) if residue != "-"]
     return {"sequence": sequence, "values": values}
+
+
+def parse_iupred_file(text: str) -> dict[str, Any]:
+    lines = clean_lines(text)
+    if not lines:
+        raise ValueError("IUPred file is empty.")
+
+    fields = lines[0].split("\t")
+    if len(fields) < 2:
+        raise ValueError("IUPred file must contain sequence and comma-separated scores.")
+
+    sequence = fields[0].strip()
+    if not sequence:
+        raise ValueError("IUPred file is missing the sequence column.")
+
+    try:
+        values = [float(value) for value in fields[1].split(",") if value.strip()]
+    except ValueError as exc:
+        raise ValueError(f"IUPred scores are not comma-separated floats: {exc}") from exc
+
+    if len(values) != len(sequence):
+        raise ValueError(
+            f"IUPred score count ({len(values)}) does not match sequence length ({len(sequence)})."
+        )
+
+    return {
+        "sequence": sequence,
+        "values": values,
+        "maxValue": 1.0,
+    }
 
 
 def parse_structure_file(text: str) -> dict[str, Any]:
@@ -330,7 +476,7 @@ def map_numeric_track(protein_sequence: str, label: str, raw_track: dict[str, An
         if 0 <= target_index < len(values):
             values[target_index] = float(value)
 
-    return {
+    mapped_track = {
         "type": "numeric",
         "label": label,
         "sequence": raw_track["sequence"],
@@ -339,6 +485,9 @@ def map_numeric_track(protein_sequence: str, label: str, raw_track: dict[str, An
         "coverage": len(raw_track["values"]) / len(protein_sequence),
         "compatible": True,
     }
+    if raw_track.get("maxValue") is not None:
+        mapped_track["maxValue"] = raw_track["maxValue"]
+    return mapped_track
 
 
 def map_structure_track(protein_sequence: str, label: str, raw_track: dict[str, Any]) -> dict[str, Any]:
@@ -491,6 +640,12 @@ def build_evidence_for_protein(
                     protein_sequence,
                     "Full-length conservation",
                     parse_conservation_file(content),
+                )
+            elif kind == "iupred":
+                bundle["iupred"] = map_numeric_track(
+                    protein_sequence,
+                    "IUPred disorder",
+                    parse_iupred_file(content),
                 )
             elif kind == "structure_uniprot":
                 bundle["structureUniprot"] = map_structure_track(
@@ -769,6 +924,7 @@ def resolve_cli_inputs(
     cds_arg: str | None,
     domains_arg: str | None,
     domains_individual_arg: str | None,
+    custom_ranges_arg: str | None = None,
     cases_arg: str | None,
     evidence_dir_arg: str | None,
 ) -> dict[str, Any]:
@@ -802,6 +958,19 @@ def resolve_cli_inputs(
             )
         )
     )
+    custom_ranges_path = (
+        resolve_path(cwd, custom_ranges_arg)
+        if custom_ranges_arg
+        else (
+            None
+            if primary_explicit
+            else (
+                (input_dir / "custom_ranges.tsv")
+                if (input_dir / "custom_ranges.tsv").exists()
+                else ((input_dir / "custom_ranges.tab") if (input_dir / "custom_ranges.tab").exists() else None)
+            )
+        )
+    )
     cases_path = (
         resolve_path(cwd, cases_arg)
         if cases_arg
@@ -830,6 +999,7 @@ def resolve_cli_inputs(
         "cds_path": cds_path,
         "domains_path": domains_path,
         "domains_individual_path": domains_individual_path,
+        "custom_ranges_path": custom_ranges_path,
         "cases_path": cases_path,
         "evidence_root": evidence_root,
         "explicit_sources": explicit_sources,
@@ -855,6 +1025,111 @@ def build_input_summary(
             f"domains={format_path_for_display(domains_path, cwd) if domains_path else 'none'}",
         ]
     )
+
+
+def _pluralize(count: int, noun: str) -> str:
+    return f"{count} {noun}" if count == 1 else f"{count} {noun}s"
+
+
+def format_evidence_discovery_lines(
+    *,
+    evidence_root: Path | None,
+) -> list[str]:
+    if not evidence_root or not evidence_root.exists():
+        return []
+
+    def count_matching(subdir_name: str, pattern: str) -> int:
+        subdir = evidence_root / subdir_name
+        return len(list(subdir.glob(pattern))) if subdir.exists() else 0
+
+    lines = ["  evidence found:"]
+    out_kinds = [
+        ("conservation", "conservation"),
+        ("conservation_full", "conservation_full"),
+        ("iupred", "iupred"),
+        ("structure_dssp", "structure_dssp"),
+        ("structure_uniprot", "structure_uniprot"),
+    ]
+    for subdir_name, label in out_kinds:
+        count = count_matching(subdir_name, "*.out")
+        detail = f"{_pluralize(count, '.out file')}" if count else "absent"
+        lines.append(f"    {label}: {detail}")
+
+    structure_dir = evidence_root / "structures"
+    if structure_dir.exists():
+        pdb_count = len(list(structure_dir.glob("*.pdb")))
+        plddt_count = len(list(structure_dir.glob("*.tsv")))
+        if pdb_count or plddt_count:
+            parts = []
+            if pdb_count:
+                parts.append(_pluralize(pdb_count, "PDB"))
+            if plddt_count:
+                parts.append(_pluralize(plddt_count, "pLDDT TSV"))
+            lines.append(f"    structures: {', '.join(parts)}")
+        else:
+            lines.append("    structures: present, but no .pdb or .tsv files found")
+    else:
+        lines.append("    structures: absent")
+
+    return lines
+
+
+def format_resolved_input_lines(
+    *,
+    cwd: Path,
+    paths: dict[str, Any],
+) -> list[str]:
+    heading = (
+        "Resolved inputs:"
+        if paths["explicit_sources"]
+        else "Picked up from input directory:"
+    )
+    lines = [
+        heading,
+        f"  input dir: {format_path_for_display(paths['input_dir'], cwd)}",
+        f"  proteins: {format_path_for_display(paths['pep_path'], cwd)}",
+        f"  cds: {format_path_for_display(paths['cds_path'], cwd)}",
+    ]
+
+    optional_items = [
+        ("domains", paths["domains_path"]),
+        ("individual domains", paths["domains_individual_path"]),
+        ("custom ranges", paths["custom_ranges_path"]),
+        ("cases", paths["cases_path"]),
+        ("evidence dir", paths["evidence_root"]),
+    ]
+    for label, path in optional_items:
+        if path and path.exists():
+            lines.append(f"  {label}: {format_path_for_display(path, cwd)}")
+            if label == "evidence dir":
+                lines.extend(
+                    format_evidence_discovery_lines(
+                        evidence_root=path,
+                    )
+                )
+
+    return lines
+
+
+def append_custom_ranges_to_payload(
+    payload: dict[str, Any],
+    custom_ranges_path: Path | None,
+    cwd: Path,
+) -> dict[str, Any]:
+    if not custom_ranges_path:
+        return payload
+
+    payload["customRanges"] = parse_custom_ranges(
+        custom_ranges_path.read_text(encoding="utf-8")
+    )
+    custom_display = format_path_for_display(custom_ranges_path, cwd)
+    current_summary = str(payload.get("inputSummary", "") or "")
+    payload["inputSummary"] = (
+        f"{current_summary} | custom={custom_display}"
+        if current_summary
+        else f"custom={custom_display}"
+    )
+    return payload
 
 
 def render_html(payload_json: str) -> str:
@@ -1372,6 +1647,11 @@ def render_html(payload_json: str) -> str:
       border-color: #27ae60;
     }
 
+    .track-legend-custom {
+      background: transparent;
+      border: 1.5px dashed #7a7a7a;
+    }
+
     .controls-row {
       display: grid;
       grid-template-columns: minmax(240px, 1.4fr) minmax(240px, 1fr);
@@ -1721,6 +2001,7 @@ def render_html(payload_json: str) -> str:
     const datasetSummary = payload.datasetSummary;
     const defaultParams = payload.defaultParams;
     const codonTable = payload.codonTable;
+    const customRangeIndex = payload.customRanges ?? {};
     const trackPalette = ["#e8b84b", "#3a85c8", "#27ae60", "#9b59b6", "#e74c3c", "#1abc9c", "#d4943a", "#2868a0"];
     const candidateColors = { r1: "#e74c3c", r2: "#e67e22", r3: "#27ae60" };
     const selectedRangeColor = "#111111";
@@ -2204,11 +2485,44 @@ def render_html(payload_json: str) -> str:
       if (_analysesCache.paramsKey === paramsKey && _analysesCache.result) {
         return _analysesCache.result;
       }
+      function normalizeCustomRange(rangeLike, proteinLength) {
+        if (!rangeLike) {
+          return null;
+        }
+
+        let parsed = null;
+        if (typeof rangeLike === "string") {
+          parsed = parseRangeString(rangeLike);
+        } else if (typeof rangeLike === "object") {
+          if (Number(rangeLike.start) && Number(rangeLike.end)) {
+            parsed = { start: Number(rangeLike.start), end: Number(rangeLike.end) };
+          } else if (rangeLike.range) {
+            parsed = parseRangeString(rangeLike.range);
+          }
+        }
+
+        if (!parsed) {
+          return null;
+        }
+
+        const normalized = clampRange(parsed, proteinLength);
+        return {
+          start: normalized.start,
+          end: normalized.end,
+          label:
+            (typeof rangeLike === "object" && (rangeLike.label || rangeLike.source)) ||
+            "custom range"
+        };
+      }
+
       const result = dataset.map((entry) => ({
         entry,
         suggestion: buildSuggestions(entry, state.params),
         validation: validateProtein(entry),
-        referenceRange: parseRangeString(entry.reference?.picked_range ?? "")
+        referenceRange: parseRangeString(entry.reference?.picked_range ?? ""),
+        customRanges: (Array.isArray(customRangeIndex[entry.id]) ? customRangeIndex[entry.id] : [])
+          .map((rangeLike) => normalizeCustomRange(rangeLike, entry.proteinSequence.length))
+          .filter(Boolean),
       }));
       _analysesCache = { paramsKey, result };
       return result;
@@ -2250,6 +2564,7 @@ def render_html(payload_json: str) -> str:
       const hasUniprot = ev.structureUniprot?.compatible;
       const hasCons = ev.conservation?.compatible;
       const hasConsFull = ev.conservationFull?.compatible;
+      const hasIupred = ev.iupred?.compatible;
       const hasPlddt = ev.plddt?.compatible;
 
       let ssTitle;
@@ -2285,6 +2600,12 @@ def render_html(payload_json: str) -> str:
           score: (hasCons ? 1 : 0) + (hasConsFull ? 1 : 0),
         },
         {
+          letter: "ID",
+          title: hasIupred ? "IUPred disorder: present" : "IUPred disorder: absent",
+          cls: hasIupred ? "dot-green" : "dot-gray",
+          score: hasIupred ? 1 : 0,
+        },
+        {
           letter: "pL",
           title: hasPlddt ? "pLDDT: present" : "pLDDT: absent",
           cls: hasPlddt ? "dot-green" : "dot-gray",
@@ -2298,8 +2619,9 @@ def render_html(payload_json: str) -> str:
       const byLetter = Object.fromEntries(badges.map((b) => [b.letter, b.score]));
       if (key === "structure") return -(byLetter["3D"] * 4 + byLetter["SS"]);
       if (key === "conservation") return -byLetter["CN"];
+      if (key === "disorder") return -byLetter["ID"];
       if (key === "plddt") return -byLetter["pL"];
-      if (key === "evidence") return -(byLetter["3D"] + byLetter["SS"] + byLetter["CN"] + byLetter["pL"]);
+      if (key === "evidence") return -(byLetter["3D"] + byLetter["SS"] + byLetter["CN"] + byLetter["ID"] + byLetter["pL"]);
       return 0;
     }
 
@@ -2357,7 +2679,7 @@ def render_html(payload_json: str) -> str:
     const BROWSER_SVG_W = 1040;
     const BROWSER_TRACK_W = BROWSER_SVG_W - BROWSER_LABEL_W;
 
-    function renderTrackViewer(entry, candidates, activeRange) {
+    function renderTrackViewer(entry, candidates, activeRange, customRanges = []) {
       const LABEL_W = BROWSER_LABEL_W;
       const SVG_W = BROWSER_SVG_W;
       const TRACK_W = BROWSER_TRACK_W;
@@ -2401,7 +2723,12 @@ def render_html(payload_json: str) -> str:
       const RANGES_LANE_H = 13;
       const RANGES_GAP = 4;
       const RANGES_PAD = 8;
-      const rangesRowHeight = RANGES_PAD + candidates.length * RANGES_LANE_H + Math.max(0, candidates.length - 1) * RANGES_GAP + RANGES_PAD;
+      const totalRangeLaneCount = Math.max(1, candidates.length + customRanges.length);
+      const rangesRowHeight =
+        RANGES_PAD +
+        totalRangeLaneCount * RANGES_LANE_H +
+        Math.max(0, totalRangeLaneCount - 1) * RANGES_GAP +
+        RANGES_PAD;
 
       const rows = [
         { label: "", height: 33, type: "ruler" },
@@ -2440,6 +2767,19 @@ def render_html(payload_json: str) -> str:
             `<rect x="${x}" y="${y}" width="${width}" height="${height}" fill="${color}" opacity="${opacity}" rx="1.5" stroke="#000" stroke-width="1" />` +
             `<defs><clipPath id="${clipId}"><rect x="${x + 1}" y="${y + 1}" width="${Math.max(0, width - 2)}" height="${Math.max(0, height - 2)}" rx="1.5" /></clipPath></defs>` +
             `<text x="${x + 3}" y="${y + height / 2 + fontSize / 3 - 0.5}" font-size="${fontSize}" fill="#111" clip-path="url(#${clipId})">${escapeHtml(domain.label)}</text>` +
+          `</g>`
+        );
+      }
+
+      function pushCustomRangeBox(customRange, x, y, width, height) {
+        const clipId = `custom-range-clip-${domainClipCounter++}`;
+        const rangeLabel = `${customRange.label}: ${customRange.start}–${customRange.end}`;
+        const titleText = `${customRange.label} (aa ${customRange.start}-${customRange.end})`;
+        svg.push(
+          `<g><title>${escapeHtml(titleText)}</title>` +
+            `<rect x="${x}" y="${y}" width="${width}" height="${height}" fill="#dddddd" opacity="0.85" rx="1.5" stroke="#7a7a7a" stroke-width="1.5" stroke-dasharray="5,3" />` +
+            `<defs><clipPath id="${clipId}"><rect x="${x + 1}" y="${y + 1}" width="${Math.max(0, width - 2)}" height="${Math.max(0, height - 2)}" rx="1.5" /></clipPath></defs>` +
+            `<text x="${x + 3}" y="${y + height / 2 + 8 / 3 - 0.5}" font-size="8" fill="#333" clip-path="url(#${clipId})">${escapeHtml(rangeLabel)}</text>` +
           `</g>`
         );
       }
@@ -2497,6 +2837,16 @@ def render_html(payload_json: str) -> str:
           8,
           candidateHoverText(candidate),
         );
+      });
+
+      customRanges.forEach((customRange, idx) => {
+        const laneY =
+          rangesRowTop +
+          RANGES_PAD +
+          (candidates.length + idx) * (RANGES_LANE_H + RANGES_GAP);
+        const x = xPos(customRange.start);
+        const width = Math.max(4, xPos(customRange.end) - x);
+        pushCustomRangeBox(customRange, x, laneY, width, RANGES_LANE_H);
       });
 
       svg.push(
@@ -2562,6 +2912,16 @@ def render_html(payload_json: str) -> str:
             ` stroke="${color}" stroke-width="1.5" opacity="0.9" />`,
           `<line x1="${xPos(candidate.end)}" y1="0" x2="${xPos(candidate.end)}" y2="${totalHeight}"` +
             ` stroke="${color}" stroke-width="1.5" opacity="0.9" />`
+        );
+      });
+
+      customRanges.forEach((customRange) => {
+        const titleText = `${customRange.label} (aa ${customRange.start}-${customRange.end})`;
+        const startX = xPos(customRange.start);
+        const endX = xPos(customRange.end);
+        svg.push(
+          `<g><title>${escapeHtml(titleText)}</title><line x1="${startX}" y1="0" x2="${startX}" y2="${totalHeight}" stroke="#7a7a7a" stroke-width="1.5" stroke-dasharray="5,4" opacity="0.9" /></g>`,
+          `<g><title>${escapeHtml(titleText)}</title><line x1="${endX}" y1="0" x2="${endX}" y2="${totalHeight}" stroke="#7a7a7a" stroke-width="1.5" stroke-dasharray="5,4" opacity="0.9" /></g>`
         );
       });
 
@@ -2635,6 +2995,18 @@ def render_html(payload_json: str) -> str:
           height: 44,
           fill: "rgba(39,174,96,0.28)",
           stroke: "#1f7a45"
+        });
+      }
+      if (entry.evidence.iupred?.compatible) {
+        availableTracks.push({
+          type: "numeric",
+          label: "IUPred",
+          coverage: entry.evidence.iupred.coverage,
+          values: entry.evidence.iupred.values,
+          height: 44,
+          fill: "rgba(110,110,110,0.20)",
+          stroke: "#666666",
+          maxValue: entry.evidence.iupred.maxValue ?? 1
         });
       }
       if (entry.evidence.plddt?.compatible) {
@@ -2800,7 +3172,7 @@ def render_html(payload_json: str) -> str:
             <span class="browser-legend-item"><span class="browser-legend-swatch browser-legend-helix"></span>helix / structured helix-like</span>
             <span class="browser-legend-item"><span class="browser-legend-swatch browser-legend-strand"></span>strand / sheet-like</span>
             <span class="browser-legend-item"><span class="browser-legend-swatch browser-legend-coil"></span>coil / turn classes</span>
-            <span class="browser-legend-item"><span class="browser-legend-swatch browser-legend-numeric"></span>numeric track (conservation / pLDDT 0–100)</span>
+            <span class="browser-legend-item"><span class="browser-legend-swatch browser-legend-numeric"></span>numeric tracks use their own scale (conservation, IUPred 0–1, pLDDT 0–100)</span>
             <span class="browser-legend-item"><span class="browser-legend-swatch browser-legend-range"></span>selected construct span</span>
           </div>
         </div>
@@ -2851,10 +3223,50 @@ def render_html(payload_json: str) -> str:
     function _applyStructureColors(viewer, entry, activeRange, withZoom) {
       viewer.setStyle({}, { cartoon: { color: "#d0d0d0" } });
       const selection = getStructureSelection(entry, activeRange);
+      function rainbowColor(fraction) {
+        const stops = [
+          [217, 55, 55],
+          [235, 140, 30],
+          [232, 196, 54],
+          [65, 170, 95],
+          [52, 120, 210],
+          [130, 80, 190],
+        ];
+        const clampedFraction = clamp(fraction, 0, 1);
+        const scaled = clampedFraction * (stops.length - 1);
+        const index = Math.min(stops.length - 2, Math.floor(scaled));
+        const localFraction = scaled - index;
+        const start = stops[index];
+        const end = stops[index + 1];
+        const rgb = start.map((channel, channelIndex) =>
+          Math.round(channel + (end[channelIndex] - channel) * localFraction)
+        );
+        return `rgb(${rgb[0]}, ${rgb[1]}, ${rgb[2]})`;
+      }
+
       if (selection.hasOverlap && selection.residueRange) {
+        const residueNumbers = Array.isArray(entry.evidence.structureModel?.mapping?.residueNumbers)
+          ? entry.evidence.structureModel.mapping.residueNumbers
+          : [];
+        const residueIndexByNumber = new Map(
+          residueNumbers.map((residueNumber, index) => [Number(residueNumber), index])
+        );
+        const proteinStart = Number(entry.evidence.structureModel?.mapping?.proteinStart) || 1;
+        const proteinEnd = Number(entry.evidence.structureModel?.mapping?.proteinEnd) || proteinStart;
+        const denominator = Math.max(1, proteinEnd - proteinStart);
         viewer.setStyle(
           { resi: `${selection.residueRange.start}-${selection.residueRange.end}` },
-          { cartoon: { color: "#d94f43" } }
+          {
+            cartoon: {
+              colorfunc: (atom) => {
+                const residueIndex = residueIndexByNumber.get(Number(atom.resi));
+                if (residueIndex === undefined) {
+                  return rainbowColor(0);
+                }
+                return rainbowColor(residueIndex / denominator);
+              }
+            }
+          }
         );
         if (withZoom) {
           viewer.zoomTo({ resi: `${selection.residueRange.start}-${selection.residueRange.end}` });
@@ -3012,6 +3424,7 @@ def render_html(payload_json: str) -> str:
             <option value="evidence"${state.sort === "evidence" ? " selected" : ""}>Sort: evidence</option>
             <option value="structure"${state.sort === "structure" ? " selected" : ""}>Sort: 3D+SS</option>
             <option value="conservation"${state.sort === "conservation" ? " selected" : ""}>Sort: conservation</option>
+            <option value="disorder"${state.sort === "disorder" ? " selected" : ""}>Sort: IUPred</option>
             <option value="plddt"${state.sort === "plddt" ? " selected" : ""}>Sort: pLDDT</option>
           </select>
         </div>
@@ -3019,6 +3432,7 @@ def render_html(payload_json: str) -> str:
           <span class="batch-legend-item"><span class="status-dot dot-green">3D</span> structure</span>
           <span class="batch-legend-item"><span class="status-dot dot-green">SS</span> 2° struct</span>
           <span class="batch-legend-item"><span class="status-dot dot-green">CN</span> conservation</span>
+          <span class="batch-legend-item"><span class="status-dot dot-green">ID</span> IUPred</span>
           <span class="batch-legend-item"><span class="status-dot dot-green">pL</span> pLDDT</span>
           <span class="batch-legend-item"><span class="status-dot dot-green">CDS</span> CDS/pep match</span>
           <span style="margin-left:4px; color: var(--muted)">
@@ -3148,7 +3562,7 @@ def render_html(payload_json: str) -> str:
           </summary>
 
           <div class="track-viewer-wrap">
-            ${renderTrackViewer(entry, candidateRanges, activeRange)}
+            ${renderTrackViewer(entry, candidateRanges, activeRange, analysis.customRanges)}
           </div>
           ${
             state.showCoordinateDetails
@@ -3158,6 +3572,11 @@ def render_html(payload_json: str) -> str:
                     <span class="track-legend-item"><span class="track-legend-swatch track-legend-r1"></span>r1 merged domain span</span>
                     <span class="track-legend-item"><span class="track-legend-swatch track-legend-r2"></span>r2 r1 plus slop</span>
                     <span class="track-legend-item"><span class="track-legend-swatch track-legend-r3"></span>r3 extra beyond r2</span>
+                    ${
+                      analysis.customRanges.length
+                        ? `<span class="track-legend-item"><span class="track-legend-swatch track-legend-custom"></span>custom range overlay</span>`
+                        : ""
+                    }
                   </div>
                   <details class="track-explainer">
                     <summary>What are r1 / r2 / r3?</summary>
@@ -3280,7 +3699,7 @@ def render_html(payload_json: str) -> str:
                 <summary class="detail-section-header detail-section-summary">
                   <div>
                     <div class="detail-section-index">3. Structure</div>
-                    <div class="detail-section-copy">Local protein structure with the selected construct range highlighted in red.</div>
+                    <div class="detail-section-copy">Local protein structure with selected residues colored by their fixed N-to-C position in the full model, from N-terminal red through a C-terminal rainbow.</div>
                   </div>
                   <div class="metric-chip">expand / collapse</div>
                 </summary>
@@ -3535,6 +3954,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Path to dataset.json produced by construct-generate. When provided, raw input flags are ignored.",
     )
     parser.add_argument(
+        "--custom-ranges",
+        dest="custom_ranges",
+        help="Optional TSV/TAB file with additional construct ranges to overlay in the report. Defaults to <input-dir>/custom_ranges.tsv when present, otherwise <input-dir>/custom_ranges.tab.",
+    )
+    parser.add_argument(
         "--input-dir",
         help="Base directory used to resolve default input files when explicit paths are omitted. Defaults to the bundled examples/ folder.",
     )
@@ -3641,6 +4065,10 @@ def main(argv: list[str] | None = None) -> None:
         if not dataset_path or not dataset_path.exists():
             raise FileNotFoundError(f"Dataset JSON not found: {dataset_path}")
         payload = json.loads(dataset_path.read_text(encoding="utf-8"))
+        custom_ranges_path = resolve_path(cwd, args.custom_ranges) if args.custom_ranges else None
+        if custom_ranges_path and not custom_ranges_path.exists():
+            raise FileNotFoundError(f"Custom ranges file not found: {custom_ranges_path}")
+        payload = append_custom_ranges_to_payload(payload, custom_ranges_path, cwd)
         output_path.parent.mkdir(parents=True, exist_ok=True)
         report_from_bundle(payload, output_path)
         print(f"Wrote {output_path}")
@@ -3655,6 +4083,7 @@ def main(argv: list[str] | None = None) -> None:
         cds_arg=args.cds,
         domains_arg=args.domains,
         domains_individual_arg=args.domains_individual,
+        custom_ranges_arg=args.custom_ranges,
         cases_arg=args.cases,
         evidence_dir_arg=args.evidence_dir,
     )
@@ -3667,6 +4096,8 @@ def main(argv: list[str] | None = None) -> None:
             raise FileNotFoundError(f"Required input file not found: {required_path}")
     if domains_path and not domains_path.exists():
         raise FileNotFoundError(f"Optional domain file was requested but not found: {domains_path}")
+    for line in format_resolved_input_lines(cwd=cwd, paths=paths):
+        print(line)
 
     params = build_params(
         slop=args.slop,
@@ -3698,6 +4129,10 @@ def main(argv: list[str] | None = None) -> None:
         input_summary=input_summary,
         generated_at=datetime.now(timezone.utc).isoformat(),
     )
+    custom_ranges_path = paths["custom_ranges_path"]
+    if custom_ranges_path and not custom_ranges_path.exists():
+        raise FileNotFoundError(f"Custom ranges file not found: {custom_ranges_path}")
+    payload = append_custom_ranges_to_payload(payload, custom_ranges_path, cwd)
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     report_from_bundle(payload, output_path)
@@ -3732,6 +4167,8 @@ def generate_main(argv: list[str] | None = None) -> None:
             raise FileNotFoundError(f"Required input file not found: {required_path}")
     if domains_path and not domains_path.exists():
         raise FileNotFoundError(f"Optional domain file was requested but not found: {domains_path}")
+    for line in format_resolved_input_lines(cwd=cwd, paths=paths):
+        print(line)
 
     params = build_params(
         slop=args.slop,
@@ -3759,12 +4196,20 @@ def generate_main(argv: list[str] | None = None) -> None:
 
     write_constructs_tsv(constructs, output_dir / "constructs.tsv")
     write_constructs_fasta(constructs, output_dir / "constructs.fasta")
-    write_dataset_json(
+    dataset_payload = build_dataset_payload(
         bundle=dataset_bundle,
         constructs=constructs,
         params=params,
         input_summary=input_summary,
-        path=output_dir / "dataset.json",
+    )
+    dataset_payload = append_custom_ranges_to_payload(
+        dataset_payload,
+        paths["custom_ranges_path"],
+        cwd,
+    )
+    (output_dir / "dataset.json").write_text(
+        json.dumps(dataset_payload, ensure_ascii=False),
+        encoding="utf-8",
     )
 
     for line in format_run_summary_lines(dataset_bundle["summary"]):
