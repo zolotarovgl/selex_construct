@@ -1,7 +1,7 @@
 # HT-SELEX construct design 
 
 `construct_report` is a standalone Python tool that generates a self-contained HTML report for protein construct review.
-Given protein sequences, cds sequences and a bed file with domain annotations, it automatically builds putative HT-SELEX constructs: 
+Given protein sequences, cds sequences and a bed file with domain annotations, it automatically builds putative HT-SELEX constructs by calculating the following ranges:  
 
 1. `r1` is built from the merged domain span.
 2. `r2` adds the requested `slop` on both sides.
@@ -9,6 +9,13 @@ Given protein sequences, cds sequences and a bed file with domain annotations, i
 4. If the resulting start is near the N-terminus, it can snap to residue `1`.
 
 ![](img/ranges.png)
+
+# Test Run 
+
+
+```bash
+python generate_report.py --input-dir examples/test/
+```
 
 
 # Manual   
@@ -217,22 +224,63 @@ Notes:
 
 --- 
 
-# DEV: Structures   
 
 
-To see the structures, add the structure .pdb files to the `examples/eviddence/structures/` directory with each pdb file named as `ID.pdb`. 
+# Generate test data
 
+## Step 1: Build the full dataset
 
-Gather the locally folded structures to test the structure display: 
+Run once to assemble `examples/fulldata/` from the upstream probe-design results.
+Paths assume the repo lives at `construct_design/construct_report/` inside the project tree.
+
 ```bash
-# pdb files
-cat examples/domains.individual.all.bed | cut -f 1 | sort | uniq  | head -n 100 > test.ids
-cat examples/domains.individual.all.bed | grep -f test.ids > examples/domains.individual.bed
-ls ~/ant/gzolotarov/projects/2021_TFevol/folding/results_nvec/*pdb | grep -f test.ids | grep '.1.alphafold' > fofn
-for FILE in $(cat fofn); do echo $FILE;PREF=$(basename $FILE | sed 's/.1.alphafold.pdb//g'); echo $PREF; cp $FILE examples/evidence/structures/${PREF}.pdb; done
+PROBE=../../probe_design
+PROTEINS=$PROBE/data/Nvec_v4_merged_proteins.fasta
+CDS=$PROBE/data/Nvec_v4_merged_CDS.fasta   # CDS-only FASTA, starts at ATG
 
-# plddt scores 
-ls ~/ant/gzolotarov/projects/2021_TFevol/folding/results_nvec/*.tsv | grep -f test.ids | grep '.1_plddt' > fofn
-for FILE in $(cat fofn); do echo $FILE;PREF=$(basename $FILE | sed 's/.1_plddt_mqc.tsv//g'); echo $PREF; cp $FILE examples/evidence/structures/${PREF}.tsv; done
+samtools faidx "$PROTEINS"
+samtools faidx "$CDS"
 
+mkdir -p examples/fulldata
+cat "$PROBE"/results/search/tfs.*.domains.csv.tmp2 > examples/fulldata/domains.individual.bed
+
+xargs samtools faidx "$PROTEINS" < <(cut -f1 examples/fulldata/domains.individual.bed | sort -u) \
+  > examples/fulldata/proteins.fasta
+xargs samtools faidx "$CDS"      < <(cut -f1 examples/fulldata/domains.individual.bed | sort -u) \
+  > examples/fulldata/cds.fasta
+
+samtools faidx examples/fulldata/proteins.fasta
+samtools faidx examples/fulldata/cds.fasta
+```
+
+> **Note:** Use `Nvec_v4_merged_CDS.fasta`, not `Nvec_v4_merged_transcripts.fasta`.
+> The transcripts file includes 5′ UTR, so frame-0 translation does not match the protein.
+> A small number of older `v1g*` gene models may still show a mismatch due to annotation
+> version differences between the protein and CDS FASTAs; these are upstream data issues.
+
+## Step 2: Build the test subset (30 proteins)
+
+Sources for evidence files:
+
+| Evidence | Source path |
+|----------|-------------|
+| PDB structures | `~/ant/gzolotarov/projects/2021_TFevol/folding/results_nvec/{ID}.1.alphafold.pdb` |
+| pLDDT scores | `~/ant/gzolotarov/projects/2021_TFevol/folding/results_nvec/{ID}.1_plddt_mqc.tsv` |
+| Conservation (DBD) | `~/Documents/projects/2025_nvec_motif/probe_design/results/conservation/{ID}.out` |
+| Conservation (full) | `~/Documents/projects/2025_nvec_motif/probe_design/results/conservation_full/{ID}.out` |
+| DSSP structure | `~/Documents/projects/2025_nvec_motif/probe_design/results/structure/{ID}.out` |
+
+```bash
+bash make_test_data.sh
+```
+
+Then run the report against the test subset:
+
+```bash
+python3 generate_report.py \
+  --pep examples/test/proteins.fasta \
+  --cds examples/test/cds.fasta \
+  --domains-individual examples/test/domains.individual.bed \
+  --evidence-dir examples/test/evidence \
+  --output report.html
 ```
