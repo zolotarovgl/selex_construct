@@ -886,6 +886,11 @@ def render_html(payload_json: str) -> str:
       background: #f0f4f7;
     }
 
+    .review-row[data-range-status="Good"] { border-left-color: var(--good); }
+    .review-row[data-range-status="Bad"] { border-left-color: var(--bad); }
+    .review-row[data-range-status="Shorter"],
+    .review-row[data-range-status="UniprotBetter"] { border-left-color: var(--amber); }
+
     .review-row-active {
       border-left-color: var(--accent);
       background: #e8eef4;
@@ -914,21 +919,46 @@ def render_html(payload_json: str) -> str:
 
     .review-row-dots {
       display: flex;
-      gap: 4px;
+      gap: 3px;
       align-items: center;
     }
 
     .status-dot {
-      display: inline-block;
-      width: 8px;
-      height: 8px;
-      border-radius: 50%;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 18px;
+      height: 15px;
+      padding: 0 2px;
+      border-radius: 3px;
+      font-size: 7px;
+      font-weight: 900;
+      color: rgba(255, 255, 255, 0.92);
+      letter-spacing: 0;
+      flex-shrink: 0;
     }
 
     .dot-green { background: var(--good); }
     .dot-red { background: var(--bad); }
     .dot-amber { background: var(--amber); }
     .dot-gray { background: #aaa; }
+
+    .batch-legend {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      padding: 3px 8px;
+      border-bottom: 1px solid var(--border-inner);
+      background: #f4f4f4;
+      font-size: 9px;
+      color: var(--muted);
+    }
+
+    .batch-legend-item {
+      display: flex;
+      align-items: center;
+      gap: 3px;
+    }
 
     .detail-column {
       padding: 10px;
@@ -981,6 +1011,12 @@ def render_html(payload_json: str) -> str:
       background: rgba(40, 104, 160, 0.12);
       color: #20537f;
       border-color: rgba(40, 104, 160, 0.25);
+    }
+
+    .pill-amber {
+      background: rgba(212, 148, 58, 0.14);
+      color: #7a4e10;
+      border-color: rgba(212, 148, 58, 0.35);
     }
 
     .status-ok {
@@ -1549,6 +1585,7 @@ def render_html(payload_json: str) -> str:
       params: { ...defaultParams },
       search: "",
       filter: "all",
+      sort: "id",
       selectedId: initialEntry?.id ?? "",
       manualRanges: {},
       showCoordinateDetails: false
@@ -2010,6 +2047,64 @@ def render_html(payload_json: str) -> str:
         return "dot-amber";
       }
       return "dot-gray";
+    }
+
+    function evidenceBadges(entry) {
+      const ev = entry.evidence ?? {};
+      const has3d = Boolean(ev.structureModel?.text);
+      const hasDssp = ev.structureDssp?.compatible;
+      const hasUniprot = ev.structureUniprot?.compatible;
+      const hasCons = ev.conservation?.compatible;
+      const hasConsFull = ev.conservationFull?.compatible;
+      const hasPlddt = ev.plddt?.compatible;
+      return [
+        {
+          letter: "3D",
+          title: has3d ? "3D structure: present" : "3D structure: absent",
+          cls: has3d ? "dot-green" : "dot-gray",
+          score: has3d ? 1 : 0,
+        },
+        {
+          letter: "SS",
+          title: hasDssp
+            ? `secondary structure: DSSP (${Math.round((ev.structureDssp.coverage ?? 1) * 100)}% coverage)`
+            : hasUniprot ? "secondary structure: UniProt only" : "secondary structure: absent",
+          cls: hasDssp
+            ? ((ev.structureDssp.coverage ?? 1) < 1 ? "dot-amber" : "dot-green")
+            : hasUniprot ? "dot-amber" : "dot-gray",
+          score: hasDssp ? 2 : hasUniprot ? 1 : 0,
+        },
+        {
+          letter: "CN",
+          title: (hasCons && hasConsFull) ? "conservation: DBD + full" : hasConsFull ? "conservation: full only" : hasCons ? "conservation: DBD only" : "conservation: absent",
+          cls: (hasCons || hasConsFull) ? "dot-green" : "dot-gray",
+          score: (hasCons ? 1 : 0) + (hasConsFull ? 1 : 0),
+        },
+        {
+          letter: "pL",
+          title: hasPlddt ? "pLDDT: present" : "pLDDT: absent",
+          cls: hasPlddt ? "dot-green" : "dot-gray",
+          score: hasPlddt ? 1 : 0,
+        },
+      ];
+    }
+
+    function evidenceSortScore(entry, key) {
+      const badges = evidenceBadges(entry);
+      const byLetter = Object.fromEntries(badges.map((b) => [b.letter, b.score]));
+      if (key === "structure") return -(byLetter["3D"] * 4 + byLetter["SS"]);
+      if (key === "conservation") return -byLetter["CN"];
+      if (key === "plddt") return -byLetter["pL"];
+      if (key === "evidence") return -(byLetter["3D"] + byLetter["SS"] + byLetter["CN"] + byLetter["pL"]);
+      return 0;
+    }
+
+    function dotToTone(value) {
+      const dc = dotClass(value);
+      if (dc === "dot-green") return "pill-green";
+      if (dc === "dot-red") return "pill-red";
+      if (dc === "dot-amber") return "pill-amber";
+      return "";
     }
 
     function statusClass(status) {
@@ -2663,21 +2758,19 @@ def render_html(payload_json: str) -> str:
 
       const recommendedBatchFasta = analyses
         .flatMap((analysis) => {
-          const recommended =
-            analysis.suggestion.recommendedKey &&
-            analysis.suggestion.candidates[analysis.suggestion.recommendedKey];
-
-          if (!recommended) {
+          const activeRange = getActiveRange(analysis);
+          if (!activeRange) {
             return [];
           }
 
-          const itemConstruct = buildConstruct(analysis.entry, recommended);
+          const itemConstruct = buildConstruct(analysis.entry, activeRange);
           if (itemConstruct.status !== "OK") {
             return [];
           }
 
+          const rangeLabel = state.manualRanges[analysis.entry.id] ? "manual" : (analysis.suggestion.recommendedKey ?? "range");
           return [
-            `>${analysis.entry.id}|${recommended.key}|aa=${formatRange(recommended)}\\n${itemConstruct.cds}`
+            `>${analysis.entry.id}|${rangeLabel}|aa=${formatRange(activeRange)}\\n${itemConstruct.cds}`
           ];
         })
         .join("\\n");
@@ -2718,31 +2811,43 @@ def render_html(payload_json: str) -> str:
             <option value="good"${state.filter === "good" ? " selected" : ""}>Good only</option>
             <option value="attention"${state.filter === "attention" ? " selected" : ""}>Attention</option>
           </select>
+          <select id="sort-input" aria-label="Sort by">
+            <option value="id"${state.sort === "id" ? " selected" : ""}>Sort: ID</option>
+            <option value="evidence"${state.sort === "evidence" ? " selected" : ""}>Sort: evidence</option>
+            <option value="structure"${state.sort === "structure" ? " selected" : ""}>Sort: 3D+SS</option>
+            <option value="conservation"${state.sort === "conservation" ? " selected" : ""}>Sort: conservation</option>
+            <option value="plddt"${state.sort === "plddt" ? " selected" : ""}>Sort: pLDDT</option>
+          </select>
+        </div>
+        <div class="batch-legend">
+          <span class="batch-legend-item"><span class="status-dot dot-green">3D</span> structure</span>
+          <span class="batch-legend-item"><span class="status-dot dot-green">SS</span> 2° struct</span>
+          <span class="batch-legend-item"><span class="status-dot dot-green">CN</span> conservation</span>
+          <span class="batch-legend-item"><span class="status-dot dot-green">pL</span> pLDDT</span>
+          <span style="margin-left:4px; color: var(--muted)">
+            <span class="status-dot dot-green" style="display:inline-flex"> </span> present &nbsp;
+            <span class="status-dot dot-amber" style="display:inline-flex"> </span> partial &nbsp;
+            <span class="status-dot dot-gray" style="display:inline-flex"> </span> absent
+          </span>
         </div>
         <div class="review-list">
           ${
             visibleAnalyses.length
               ? visibleAnalyses
                   .map((analysis) => {
-                    const reference = analysis.entry.reference ?? {};
-                    const dots = [
-                      reference.status_structure ?? "NA",
-                      reference.status_range ?? "NA",
-                      analysis.validation.lengthStatus
-                    ];
+                    const badges = evidenceBadges(analysis.entry);
                     const active = analysis.entry.id === selectedId;
                     const domainSummary =
-                      analysis.entry.mergedDomains.map((domain) => domain.label).join(", ") ||
-                      "no domain BED ranges";
+                      analysis.entry.individualDomains.map((d) => d.label).join(", ") ||
+                      analysis.entry.mergedDomains.map((d) => d.label).join(", ") ||
+                      "no domains";
 
                     return `
                       <button type="button" class="review-row ${active ? "review-row-active" : ""}" data-select-id="${escapeHtml(analysis.entry.id)}">
                         <div class="review-row-top">
                           <strong>${escapeHtml(analysis.entry.id)}</strong>
                           <span class="review-row-dots">
-                            ${dots
-                              .map((status) => `<span class="status-dot ${dotClass(status)}" title="${escapeHtml(status)}"></span>`)
-                              .join("")}
+                            ${badges.map((b) => `<span class="status-dot ${b.cls}" title="${escapeHtml(b.title)}">${b.letter}</span>`).join("")}
                           </span>
                         </div>
                         <div class="review-row-id">${escapeHtml(domainSummary)}</div>
@@ -2762,6 +2867,11 @@ def render_html(payload_json: str) -> str:
 
       batchPanelEl.querySelector("#filter-input")?.addEventListener("change", (event) => {
         state.filter = event.target.value;
+        render();
+      });
+
+      batchPanelEl.querySelector("#sort-input")?.addEventListener("change", (event) => {
+        state.sort = event.target.value;
         render();
       });
 
@@ -2795,9 +2905,9 @@ def render_html(payload_json: str) -> str:
         <div class="detail-header">
           <span class="detail-header-name">${escapeHtml(entry.id)}</span>
           <span class="metric-chip">length: ${entry.proteinSequence.length} aa</span>
-          <span class="metric-chip">CDS: <span class="${statusClass(analysis.validation.lengthStatus)}">&nbsp;${escapeHtml(analysis.validation.lengthStatus)}</span></span>
+          <span class="metric-chip ${dotToTone(analysis.validation.lengthStatus)}">CDS: ${escapeHtml(analysis.validation.lengthStatus)}</span>
           <span class="metric-chip">range: ${escapeHtml(formatRange(activeRange))}</span>
-          <span class="metric-chip">translation: <span class="${statusClass(analysis.validation.translationStatus)}">&nbsp;${escapeHtml(analysis.validation.translationStatus)}</span></span>
+          <span class="metric-chip ${dotToTone(analysis.validation.translationStatus)}">translation: ${escapeHtml(analysis.validation.translationStatus)}</span>
         </div>
 
         <details class="detail-section" open>
@@ -3149,6 +3259,14 @@ def render_html(payload_json: str) -> str:
         return matchesSearch && matchesFilter;
       });
 
+      if (state.sort !== "id") {
+        visibleAnalyses.sort((a, b) => {
+          const sa = evidenceSortScore(a.entry, state.sort);
+          const sb = evidenceSortScore(b.entry, state.sort);
+          return sa !== sb ? sa - sb : a.entry.id.localeCompare(b.entry.id);
+        });
+      }
+
       if (!visibleAnalyses.some((analysis) => analysis.entry.id === state.selectedId)) {
         state.selectedId = visibleAnalyses[0]?.entry.id ?? analyses[0]?.entry.id ?? "";
       }
@@ -3159,7 +3277,7 @@ def render_html(payload_json: str) -> str:
         analyses[0] ??
         null;
 
-      const batchKey = `${state.search}|${state.filter}|${state.selectedId}`;
+      const batchKey = `${state.search}|${state.filter}|${state.sort}|${state.selectedId}`;
       renderToolbar(selectedAnalysis, analyses);
       if (batchKey !== _lastBatchKey) {
         renderBatch(visibleAnalyses, state.selectedId);
