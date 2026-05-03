@@ -6,9 +6,9 @@ This document describes the purpose, inputs, GUI layout, and internal logic of `
 
 ## Purpose
 
-`construct_report` generates a **self-contained HTML report** for reviewing protein construct boundaries. The typical use case is HT-SELEX construct design: given a set of transcription factor proteins (here *Nematostella vectensis*), the tool suggests which amino-acid range to express recombinantly, integrating domain annotations, sequence conservation, and AlphaFold structure data.
+`construct_report` generates recommended construct boundaries, CDS exports, and a **self-contained HTML report** for reviewing protein construct boundaries. The typical use case is HT-SELEX construct design: given a set of transcription factor proteins (here *Nematostella vectensis*), the tool suggests which amino-acid range to express recombinantly, integrating domain annotations, sequence conservation, and AlphaFold structure data.
 
-All logic — data parsing, range calculation, and the interactive GUI — lives in a single file: `src/construct_report/cli.py`. The HTML output embeds all data and JavaScript inline, requiring no server.
+Most orchestration now lives across `src/construct_report/cli.py`, `ranges.py`, `pipeline.py`, and `report.py`; the report step still uses the embedded HTML/JavaScript template renderer. The HTML output remains self-contained and requires no server.
 
 ---
 
@@ -29,6 +29,7 @@ All logic — data parsing, range calculation, and the interactive GUI — lives
 | `--domains-individual` | Per-domain-hit BED/TSV (4 or 6 columns: `protein_id  start  end  label [pfam_id  score]`). If provided and non-empty, only proteins appearing in this file are included in the report. |
 | `--cases` | TSV with human-curated review annotations per protein (see Cases Table below). |
 | `--evidence-dir` | Root directory containing evidence subdirectories (see Evidence Layout below). |
+| `--dataset` | Report-only mode for `construct-report`; path to `dataset.json` produced by `construct-generate`. |
 | `--output` | Output HTML path. Defaults to `./report.html`. |
 
 ### Range-Calling Parameters
@@ -115,6 +116,44 @@ The **active range** for a protein is:
 
 ---
 
+## Two-Step Workflow
+
+`construct-report` still accepts raw inputs directly, but the codebase now also supports a split generate/report workflow.
+
+### Step 1 — Generate constructs
+
+```bash
+construct-generate \
+  --pep proteins.fasta \
+  --cds cds.fasta \
+  --domains-individual domains.individual.bed \
+  --evidence-dir evidence/ \
+  --output-dir out/
+```
+
+This writes:
+
+- `out/constructs.tsv` — per-protein ranges, selected CDS spans, and status
+- `out/constructs.fasta` — CDS FASTA for all constructs whose translation matches
+- `out/dataset.json` — full data bundle for the report step
+
+### Step 2 — Generate HTML report
+
+```bash
+construct-report --dataset out/dataset.json --output report.html
+```
+
+Or keep the original single-step behaviour:
+
+```bash
+construct-report \
+  --pep proteins.fasta \
+  --cds cds.fasta \
+  --output report.html
+```
+
+---
+
 ## GUI Layout
 
 The report has three panels: **Toolbar** (top), **Batch list** (left), **Detail view** (right).
@@ -192,10 +231,14 @@ Rendered only if a `.pdb` file was loaded for the protein. Uses `3Dmol.js` (load
 
 ## Internal Architecture
 
-All code lives in `src/construct_report/cli.py`:
+The main runtime pieces are:
 
-| Function | Role |
-|----------|------|
+| Component | Role |
+|-----------|------|
+| `cli.py` | CLI entry points, path resolution, input loading, backward-compatible single-step flow |
+| `ranges.py` | Python port of the `r1` / `r2` / `r3` range logic |
+| `pipeline.py` | Generate step: construct calling plus TSV / FASTA / JSON writing |
+| `report.py` | Report payload normalization and HTML report writing |
 | `parse_fasta` | Parse protein / CDS FASTA |
 | `parse_merged_domains` / `parse_individual_domains` | Parse domain BED files |
 | `parse_conservation_file` | Parse 2- or 3-line conservation format; raises `ValueError` on empty/malformed |
@@ -206,8 +249,8 @@ All code lives in `src/construct_report/cli.py`:
 | `build_structure_model_mapping` | Align PDB model to full protein using DSSP/UniProt offset or sequence search |
 | `build_evidence_for_protein` | Assemble all evidence for one protein; skips bad files with stderr warning |
 | `load_dataset_bundle` | Load all inputs; return entries + summary dict |
-| `render_html` | Embed data as JSON + emit the full HTML/CSS/JS template |
-| `main` | CLI entry point; path resolution, validation, orchestration |
+| `render_html` | Embed data as JSON + emit the full HTML/CSS/JS template used by the report step |
+| `main` / `generate_main` | Report and generate CLI entry points |
 
 **JavaScript state** (inside the HTML):
 - `state.params` — range-calling parameters (slop, offset, etc.)

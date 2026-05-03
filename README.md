@@ -1,7 +1,12 @@
 # HT-SELEX construct design 
 
-`construct_report` is a standalone Python tool that generates a self-contained HTML report for protein construct review.
-Given protein sequences, cds sequences and a bed file with domain annotations, it automatically builds putative HT-SELEX constructs by calculating the following ranges:  
+`construct_report` is a standalone Python tool that generates recommended constructs, exportable CDS outputs, and a self-contained HTML report for protein construct review.
+The preferred workflow is now a two-step pipeline:
+
+1. `construct-generate` computes construct boundaries and writes `constructs.tsv`, `constructs.fasta`, and `dataset.json`.
+2. `construct-report` reads `dataset.json` and renders the interactive HTML report.
+
+Given protein sequences, CDS sequences, and a BED file with domain annotations, it automatically builds putative HT-SELEX constructs by calculating the following ranges:
 
 1. `r1` is built from the merged domain span.
 2. `r2` adds the requested `slop` on both sides.
@@ -10,11 +15,19 @@ Given protein sequences, cds sequences and a bed file with domain annotations, i
 
 ![](img/ranges.png)
 
-# Test Run 
+# Quick Start
 
 
 ```bash
-python generate_report.py --input-dir examples/test/
+python3 -m pip install -e . --no-build-isolation
+
+construct-generate \
+  --input-dir examples/test \
+  --output-dir out/
+
+construct-report \
+  --dataset out/dataset.json \
+  --output report.html
 ```
 
 
@@ -23,7 +36,10 @@ python generate_report.py --input-dir examples/test/
 ## Project Layout
 
 - `src/construct_report/`: the standalone Python package
-- `generate_report.py`: simple local wrapper for running from a checkout
+- `src/construct_report/ranges.py`: Python implementation of the `r1` / `r2` / `r3` range logic
+- `src/construct_report/pipeline.py`: construct generation and TSV / FASTA / JSON writers
+- `src/construct_report/report.py`: report payload normalization and HTML writing
+- `generate_report.py`: backward-compatible single-step wrapper
 - `examples/`: bundled example inputs
 - `pyproject.toml`: package metadata and CLI entry point
 
@@ -36,8 +52,8 @@ The minimal inputs are:
 
 Optional inputs:
 
-- `--domains`: domain BED in protein coordinates
 - `--domains-individual`: optional per-domain BED/TSV
+- `--domains`: merged domain BED in protein coordinates (option)  
 - `--cases`: optional reference/QC table
 - `--evidence-dir`: optional evidence directory with subfolders such as `conservation/`, `conservation_full/`, `structure_uniprot/`, and `structure_dssp/`
 
@@ -120,7 +136,7 @@ If a matching file exists under `evidence/structures/`, the HTML report shows a 
 
 ## Run From a Checkout
 
-From this directory:
+The old single-step wrapper still works from a checkout:
 
 ```bash
 python3 generate_report.py \
@@ -136,10 +152,40 @@ On each run, the script prints a dataset summary to the terminal, including how 
 
 ## Installable CLI
 
-From this directory:
+From this directory, install the package to get both pipeline commands:
 
 ```bash
-python3 -m pip install -e .
+python3 -m pip install -e . --no-build-isolation
+```
+
+### Step 1: Generate constructs
+
+```bash
+construct-generate \
+  --pep examples/proteins.fasta \
+  --cds examples/cds.fasta \
+  --domains-individual examples/domains.individual.bed \
+  --evidence-dir examples/evidence \
+  --output-dir out/
+```
+
+This writes:
+
+- `out/constructs.tsv`: one row per protein with `r1`, `r2`, `r3`, recommended range, CDS span, status, and CDS sequence
+- `out/constructs.fasta`: CDS FASTA for constructs whose translated CDS matches the protein sequence
+- `out/dataset.json`: full serialized dataset for the report step
+
+### Step 2: Render the HTML report
+
+```bash
+construct-report --dataset out/dataset.json --output report.html
+```
+
+### Backward-compatible single-step mode
+
+`construct-report` can still load the raw input files directly and build the report in one command:
+
+```bash
 construct-report \
   --pep examples/proteins.fasta \
   --cds examples/cds.fasta \
@@ -172,10 +218,11 @@ These feed the report’s `r1`, `r2`, and `r3` suggestions:
 ## Example Run
 
 ```bash
-python3 generate_report.py --output report.html
+construct-generate --input-dir examples/test --output-dir out/
+construct-report --dataset out/dataset.json --output report.html
 ```
 
-That command uses the bundled `examples/` dataset and writes a standalone HTML file you can open directly in a browser.
+Those commands use the bundled `examples/test/` dataset and write both the intermediate pipeline outputs and the final standalone HTML report.
 
 ---
 

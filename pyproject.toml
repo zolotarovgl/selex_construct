@@ -12,6 +12,7 @@ dependencies = []
 
 [project.scripts]
 construct-report = "construct_report.cli:main"
+construct-generate = "construct_report.cli:generate_main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}

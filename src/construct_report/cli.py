@@ -8,6 +8,15 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from construct_report.pipeline import (
+    build_dataset_payload,
+    compute_constructs,
+    write_constructs_fasta,
+    write_constructs_tsv,
+    write_dataset_json,
+)
+from construct_report.report import report_from_bundle
+
 DEFAULT_PARAMS = {
     "slop": 50,
     "offset": 15,
@@ -735,6 +744,117 @@ def format_run_summary_lines(summary: dict[str, Any]) -> list[str]:
         f"  kept with structure models: {summary['keptWithStructureModels']}",
     ]
     return lines
+
+
+def build_params(
+    slop: int,
+    offset: int,
+    min_structured_run: int,
+    n_terminal_snap_threshold: int,
+) -> dict[str, int]:
+    return {
+        "slop": max(1, slop),
+        "offset": max(1, offset),
+        "minStructuredRun": max(1, min_structured_run),
+        "nTerminalSnapThreshold": max(1, n_terminal_snap_threshold),
+    }
+
+
+def resolve_cli_inputs(
+    *,
+    cwd: Path,
+    project_root: Path,
+    input_dir_arg: str | None,
+    pep_arg: str | None,
+    cds_arg: str | None,
+    domains_arg: str | None,
+    domains_individual_arg: str | None,
+    cases_arg: str | None,
+    evidence_dir_arg: str | None,
+) -> dict[str, Any]:
+    input_dir = (
+        resolve_path(cwd, input_dir_arg)
+        if input_dir_arg
+        else (project_root / "examples").resolve()
+    )
+    primary_explicit = any(value is not None for value in (pep_arg, cds_arg, domains_arg))
+    pep_path = resolve_path(cwd, pep_arg) or (input_dir / "proteins.fasta")
+    cds_path = resolve_path(cwd, cds_arg) or (input_dir / "cds.fasta")
+
+    if domains_arg:
+        domains_path = resolve_path(cwd, domains_arg)
+    elif primary_explicit:
+        domains_path = None
+    else:
+        default_domains = input_dir / "domains.bed"
+        domains_path = default_domains if default_domains.exists() else None
+
+    domains_individual_path = (
+        resolve_path(cwd, domains_individual_arg)
+        if domains_individual_arg
+        else (
+            None
+            if primary_explicit
+            else (
+                (input_dir / "domains.individual.bed")
+                if (input_dir / "domains.individual.bed").exists()
+                else (input_dir / "domains.individual.tab")
+            )
+        )
+    )
+    cases_path = (
+        resolve_path(cwd, cases_arg)
+        if cases_arg
+        else (None if primary_explicit else input_dir / "cases.tsv")
+    )
+    evidence_root = (
+        resolve_path(cwd, evidence_dir_arg)
+        if evidence_dir_arg
+        else (None if primary_explicit else input_dir / "evidence")
+    )
+    explicit_sources = any(
+        value is not None
+        for value in (
+            pep_arg,
+            cds_arg,
+            domains_arg,
+            domains_individual_arg,
+            cases_arg,
+            evidence_dir_arg,
+        )
+    )
+
+    return {
+        "input_dir": input_dir,
+        "pep_path": pep_path,
+        "cds_path": cds_path,
+        "domains_path": domains_path,
+        "domains_individual_path": domains_individual_path,
+        "cases_path": cases_path,
+        "evidence_root": evidence_root,
+        "explicit_sources": explicit_sources,
+    }
+
+
+def build_input_summary(
+    *,
+    cwd: Path,
+    input_dir: Path,
+    pep_path: Path,
+    cds_path: Path,
+    domains_path: Path | None,
+    explicit_sources: bool,
+) -> str:
+    if not explicit_sources:
+        return format_path_for_display(input_dir, cwd)
+
+    return " | ".join(
+        [
+            f"pep={format_path_for_display(pep_path, cwd)}",
+            f"cds={format_path_for_display(cds_path, cwd)}",
+            f"domains={format_path_for_display(domains_path, cwd) if domains_path else 'none'}",
+        ]
+    )
 
 
 def render_html(payload_json: str) -> str:
@@ -2048,6 +2168,9 @@ def render_html(payload_json: str) -> str:
       if (r3.start > 1 && r3.start < params.nTerminalSnapThreshold) {
         r3 = { ...r3, start: 1 };
       }
+      if (r3.end < proteinLength && proteinLength - r3.end < params.nTerminalSnapThreshold) {
+        r3 = { ...r3, end: proteinLength };
+      }
 
       return {
         candidates: {
@@ -2272,15 +2395,9 @@ def render_html(payload_json: str) -> str:
             4 + // gap after individual label
             individualLaneCount * individualLaneHeight +
             Math.max(0, individualLaneCount - 1) * individualLaneGap +
-            8 + // gap before divider / merged section
-            8 + // merged row label
-            4 + // gap after merged label
-            12 + // merged row height
-            8 + // gap before contribution lane
-            10 + // contribution lane
             6 // bottom padding
           )
-        : 54;
+        : 28;
       const RANGES_LANE_H = 13;
       const RANGES_GAP = 4;
       const RANGES_PAD = 8;
@@ -2299,12 +2416,6 @@ def render_html(payload_json: str) -> str:
         return LABEL_W + ((pos - 1) / (entry.proteinSequence.length - 1)) * TRACK_W;
       }
 
-      const candidateByKey = Object.fromEntries(candidates.map((candidate) => [candidate.key, candidate]));
-      const r1 = candidateByKey.r1 ?? null;
-      const r2 = candidateByKey.r2 ?? null;
-      const r3 = candidateByKey.r3 ?? null;
-      const r1Segments = r1?.segments?.length ? r1.segments : [];
-      const r2Segments = r2?.segments?.length ? r2.segments : [];
       const majorInterval =
         entry.proteinSequence.length > 400 ? 100 : entry.proteinSequence.length > 150 ? 50 : 25;
       const pxPerAA = TRACK_W / Math.max(1, entry.proteinSequence.length - 1);
@@ -2322,15 +2433,19 @@ def render_html(payload_json: str) -> str:
       const svg = [];
       let domainClipCounter = 0;
 
-      function pushLabeledDomainBox(kind, domain, x, y, width, height, color, opacity, fontSize) {
+      function pushLabeledDomainBox(kind, domain, x, y, width, height, color, opacity, fontSize, titleText = null) {
         const clipId = `${kind}-domain-clip-${domainClipCounter++}`;
         svg.push(
-          `<g><title>${escapeHtml(domain.label)} ${domain.start}-${domain.end}</title>` +
+          `<g><title>${escapeHtml(titleText ?? `${domain.label} ${domain.start}-${domain.end}`)}</title>` +
             `<rect x="${x}" y="${y}" width="${width}" height="${height}" fill="${color}" opacity="${opacity}" rx="1.5" stroke="#000" stroke-width="1" />` +
             `<defs><clipPath id="${clipId}"><rect x="${x + 1}" y="${y + 1}" width="${Math.max(0, width - 2)}" height="${Math.max(0, height - 2)}" rx="1.5" /></clipPath></defs>` +
             `<text x="${x + 3}" y="${y + height / 2 + fontSize / 3 - 0.5}" font-size="${fontSize}" fill="#111" clip-path="url(#${clipId})">${escapeHtml(domain.label)}</text>` +
           `</g>`
         );
+      }
+
+      function candidateHoverText(candidate) {
+        return `${candidate.key}: ${candidate.description} (aa ${candidate.start}-${candidate.end})`;
       }
 
       const domainRowTop = trackTops[1];
@@ -2340,9 +2455,7 @@ def render_html(payload_json: str) -> str:
       const individualBlockHeight =
         individualLaneCount * individualLaneHeight +
         Math.max(0, individualLaneCount - 1) * individualLaneGap;
-      const mergedLabelY = hasIndividualDomains ? individualTrackTop + individualBlockHeight + 16 : domainRowTop + 14;
-      const mergedY = hasIndividualDomains ? mergedLabelY + 4 : domainRowTop + 7;
-      const mergedHeight = hasIndividualDomains ? 13 : 20;
+      const domainNoteY = domainRowTop + 18;
 
       rows.forEach((row, index) => {
         const y = trackTops[index];
@@ -2359,9 +2472,6 @@ def render_html(payload_json: str) -> str:
           row.type === "domains" && hasIndividualDomains
             ? `<text x="${LABEL_W - 4}" y="${individualLabelY}" text-anchor="end" font-size="7" fill="#666">individual</text>`
             : "",
-          row.type === "domains" && hasIndividualDomains
-            ? `<text x="${LABEL_W - 4}" y="${mergedLabelY}" text-anchor="end" font-size="7" fill="#666">merged</text>`
-            : "",
           index > 0 ? `<line x1="0" y1="${y}" x2="${SVG_W}" y2="${y}" stroke="#d0d0d0" stroke-width="1" />` : "",
           `<line x1="${LABEL_W}" y1="${y}" x2="${LABEL_W}" y2="${y + row.height}" stroke="#aaa" stroke-width="1" />`
         );
@@ -2375,7 +2485,18 @@ def render_html(payload_json: str) -> str:
         const width = Math.max(4, xPos(candidate.end) - x);
         const rangeLabel = `${candidate.key}: ${candidate.start}–${candidate.end}`;
         const domainObj = { label: rangeLabel, start: candidate.start, end: candidate.end };
-        pushLabeledDomainBox("candidate", domainObj, x, laneY, width, RANGES_LANE_H, color, 0.75, 8);
+        pushLabeledDomainBox(
+          "candidate",
+          domainObj,
+          x,
+          laneY,
+          width,
+          RANGES_LANE_H,
+          color,
+          0.75,
+          8,
+          candidateHoverText(candidate),
+        );
       });
 
       svg.push(
@@ -2418,19 +2539,9 @@ def render_html(payload_json: str) -> str:
         );
       });
 
-      candidates.forEach((candidate) => {
-        const color = candidateColors[candidate.key] ?? "#888";
-        svg.push(
-          `<text x="${xPos(candidate.start) + 3}" y="${rulerY + 10}" font-size="8" fill="${color}" font-weight="700">` +
-            `${candidate.key}</text>`
-        );
-      });
-
-      const contributionY = mergedY + mergedHeight + 7;
-      const contributionHeight = 10;
       if (!mergedDomains.length && !entry.individualDomains.length) {
         svg.push(
-          `<text x="${LABEL_W + 10}" y="${mergedY + 14}" font-size="10" fill="#888">no domain BED ranges</text>`
+          `<text x="${LABEL_W + 10}" y="${domainNoteY}" font-size="10" fill="#888">no domain BED ranges</text>`
         );
       }
 
@@ -2441,59 +2552,6 @@ def render_html(payload_json: str) -> str:
           const color = trackPalette[index % trackPalette.length];
           const y = individualTrackTop + domain.laneIndex * (individualLaneHeight + individualLaneGap);
           pushLabeledDomainBox("individual", domain, x, y, width, individualLaneHeight, color, 0.9, 7);
-        });
-        svg.push(
-          `<line x1="${LABEL_W}" y1="${individualTrackTop + individualBlockHeight + 8}" x2="${SVG_W}" y2="${individualTrackTop + individualBlockHeight + 8}" stroke="#d4d4d4" stroke-width="1" />`
-        );
-      }
-
-      mergedDomains.forEach((domain, index) => {
-        const x = xPos(domain.start);
-        const width = Math.max(4, xPos(domain.end) - x);
-        const color = trackPalette[index % trackPalette.length];
-        pushLabeledDomainBox("merged", domain, x, mergedY, width, mergedHeight, color, 0.72, hasIndividualDomains ? 7 : 8);
-      });
-
-      if (r2Segments.length) {
-        r2Segments.forEach((segment) => {
-          const segmentX = xPos(segment.start);
-          const segmentWidth = Math.max(3, xPos(segment.end) - segmentX);
-          svg.push(
-            `<rect x="${segmentX}" y="${contributionY}" width="${segmentWidth}" height="${contributionHeight}"` +
-              ` fill="rgba(230,126,34,0.35)" stroke="#e67e22" stroke-width="1" rx="1" />`
-          );
-        });
-      }
-
-      if (r1Segments.length) {
-        r1Segments.forEach((segment) => {
-          const segmentX = xPos(segment.start);
-          const segmentWidth = Math.max(3, xPos(segment.end) - segmentX);
-          svg.push(
-            `<rect x="${segmentX}" y="${contributionY}" width="${segmentWidth}" height="${contributionHeight}"` +
-              ` fill="rgba(231,76,60,0.20)" stroke="#e74c3c" stroke-width="1" rx="1" />`
-          );
-        });
-      }
-
-      if (r2 && r3) {
-        const r3Segments = [
-          r3.start < r2.start ? { start: r3.start, end: r2.start } : null,
-          r3.end > r2.end ? { start: r2.end, end: r3.end } : null
-        ].filter(Boolean);
-
-        r3Segments.forEach((segment) => {
-          const segmentX = xPos(segment.start);
-          const segmentWidth = Math.max(3, xPos(segment.end) - segmentX);
-          svg.push(
-            `<rect x="${segmentX}" y="${contributionY}" width="${segmentWidth}" height="${contributionHeight}"` +
-              ` fill="rgba(39,174,96,0.35)" stroke="#27ae60" stroke-width="1" rx="1" />`
-          );
-          if (segmentWidth > 34) {
-            svg.push(
-              `<text x="${segmentX + 4}" y="${contributionY + 8}" font-size="7.5" fill="#1f7a45" font-weight="700">r3 ext</text>`
-            );
-          }
         });
       }
 
@@ -3107,8 +3165,8 @@ def render_html(payload_json: str) -> str:
                       <p><strong>r1</strong> is built by merging all available domain hits for the protein into one continuous span.</p>
                       <p><strong>r2</strong> is that <strong>r1</strong> span expanded by ±${state.params.slop} aa.</p>
                       <p><strong>r3</strong> starts from <strong>r2</strong> and expands further when a compatible structure track has structured runs of at least ${state.params.minStructuredRun} aa within ${state.params.offset} aa of either edge.</p>
-                      <p>If the resulting start lands below residue ${state.params.nTerminalSnapThreshold} but is still greater than 1, the range snaps to residue 1.</p>
-                      <p>So in practice, <strong>r3</strong> is the structure-aware version of <strong>r2</strong>, meant to avoid cutting too close to nearby structured elements.</p>
+                      <p>If the resulting start or end lands within ${state.params.nTerminalSnapThreshold} aa of a protein terminus, the range snaps to that terminus.</p>
+                      <p>So in practice, <strong>r3</strong> is the structure-aware version of <strong>r2</strong>, meant to avoid cutting too close to nearby structured elements while still extending cleanly to a nearby terminus.</p>
                     </div>
                   </details>
                   <div class="track-drag-note">Drag the black range boundaries directly on the coordinate plot.</div>
@@ -3158,7 +3216,7 @@ def render_html(payload_json: str) -> str:
                             </label>
                           </div>
                           <div class="params-field">
-                            <label>N-term snap
+                            <label>Terminal snap
                               <input type="number" data-param-key="nTerminalSnapThreshold" value="${state.params.nTerminalSnapThreshold}">
                             </label>
                           </div>
@@ -3468,9 +3526,13 @@ def render_html(payload_json: str) -> str:
     return template.replace("__PAYLOAD__", payload_json)
 
 
-def parse_args() -> argparse.Namespace:
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Generate a self-contained HTML construct-design report from protein, CDS, and domain inputs."
+    )
+    parser.add_argument(
+        "--dataset",
+        help="Path to dataset.json produced by construct-generate. When provided, raw input flags are ignored.",
     )
     parser.add_argument(
         "--input-dir",
@@ -3526,128 +3588,190 @@ def parse_args() -> argparse.Namespace:
         dest="n_terminal_snap_threshold",
         type=int,
         default=DEFAULT_PARAMS["nTerminalSnapThreshold"],
-        help="Snap starts to residue 1 when they fall below this threshold.",
+        help="Snap range ends to the nearest protein terminus when they fall within this threshold.",
     )
     parser.add_argument(
         "--output",
         help="Path to the output HTML file. Defaults to ./report.html in the current working directory.",
     )
-    return parser.parse_args()
+    return parser.parse_args(argv)
 
 
-def main() -> None:
-    args = parse_args()
-    project_root = Path(__file__).resolve().parents[2]
+def parse_generate_args(argv: list[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Compute construct ranges and CDS sequences; write TSV, FASTA, and dataset JSON."
+    )
+    parser.add_argument("--input-dir")
+    parser.add_argument("--pep")
+    parser.add_argument("--cds")
+    parser.add_argument("--domains")
+    parser.add_argument("--domains-individual", dest="domains_individual")
+    parser.add_argument("--cases")
+    parser.add_argument("--evidence-dir", dest="evidence_dir")
+    parser.add_argument("--slop", type=int, default=DEFAULT_PARAMS["slop"])
+    parser.add_argument("--offset", type=int, default=DEFAULT_PARAMS["offset"])
+    parser.add_argument(
+        "--min-structured-run",
+        dest="min_structured_run",
+        type=int,
+        default=DEFAULT_PARAMS["minStructuredRun"],
+    )
+    parser.add_argument(
+        "--n-terminal-snap-threshold",
+        dest="n_terminal_snap_threshold",
+        type=int,
+        default=DEFAULT_PARAMS["nTerminalSnapThreshold"],
+        help="Snap range ends to the nearest protein terminus when they fall within this threshold.",
+    )
+    parser.add_argument("--output-dir", dest="output_dir", default=".")
+    return parser.parse_args(argv)
+
+
+def main(argv: list[str] | None = None) -> None:
+    args = parse_args(argv)
     cwd = Path.cwd()
-    input_dir = (
-        resolve_path(cwd, args.input_dir)
-        if args.input_dir
-        else (project_root / "examples").resolve()
-    )
-    primary_explicit = any(value is not None for value in (args.pep, args.cds, args.domains))
-    pep_path = resolve_path(cwd, args.pep) or (input_dir / "proteins.fasta")
-    cds_path = resolve_path(cwd, args.cds) or (input_dir / "cds.fasta")
-    if args.domains:
-        domains_path = resolve_path(cwd, args.domains)
-    elif primary_explicit:
-        domains_path = None
-    else:
-        default_domains = input_dir / "domains.bed"
-        domains_path = default_domains if default_domains.exists() else None
-    domains_individual_path = (
-        resolve_path(cwd, args.domains_individual)
-        if args.domains_individual
-        else (
-            None
-            if primary_explicit
-            else (
-                (input_dir / "domains.individual.bed")
-                if (input_dir / "domains.individual.bed").exists()
-                else (input_dir / "domains.individual.tab")
-            )
-        )
-    )
-    cases_path = (
-        resolve_path(cwd, args.cases)
-        if args.cases
-        else (None if primary_explicit else input_dir / "cases.tsv")
-    )
-    evidence_root = (
-        resolve_path(cwd, args.evidence_dir)
-        if args.evidence_dir
-        else (None if primary_explicit else input_dir / "evidence")
-    )
     output_path = (
         resolve_path(cwd, args.output)
         if args.output
         else (cwd / "report.html").resolve()
     )
 
+    if args.dataset:
+        dataset_path = resolve_path(cwd, args.dataset)
+        if not dataset_path or not dataset_path.exists():
+            raise FileNotFoundError(f"Dataset JSON not found: {dataset_path}")
+        payload = json.loads(dataset_path.read_text(encoding="utf-8"))
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        report_from_bundle(payload, output_path)
+        print(f"Wrote {output_path}")
+        return
+
+    project_root = Path(__file__).resolve().parents[2]
+    paths = resolve_cli_inputs(
+        cwd=cwd,
+        project_root=project_root,
+        input_dir_arg=args.input_dir,
+        pep_arg=args.pep,
+        cds_arg=args.cds,
+        domains_arg=args.domains,
+        domains_individual_arg=args.domains_individual,
+        cases_arg=args.cases,
+        evidence_dir_arg=args.evidence_dir,
+    )
+
+    pep_path = paths["pep_path"]
+    cds_path = paths["cds_path"]
+    domains_path = paths["domains_path"]
     for required_path in (pep_path, cds_path):
         if not required_path.exists():
             raise FileNotFoundError(f"Required input file not found: {required_path}")
     if domains_path and not domains_path.exists():
         raise FileNotFoundError(f"Optional domain file was requested but not found: {domains_path}")
 
-    params = {
-        "slop": max(1, args.slop),
-        "offset": max(1, args.offset),
-        "minStructuredRun": max(1, args.min_structured_run),
-        "nTerminalSnapThreshold": max(1, args.n_terminal_snap_threshold),
-    }
-
+    params = build_params(
+        slop=args.slop,
+        offset=args.offset,
+        min_structured_run=args.min_structured_run,
+        n_terminal_snap_threshold=args.n_terminal_snap_threshold,
+    )
     dataset_bundle = load_dataset_bundle(
         pep_path=pep_path,
         cds_path=cds_path,
         domains_path=domains_path,
-        domains_individual_path=domains_individual_path,
-        cases_path=cases_path,
-        evidence_root=evidence_root,
+        domains_individual_path=paths["domains_individual_path"],
+        cases_path=paths["cases_path"],
+        evidence_root=paths["evidence_root"],
     )
-    dataset = dataset_bundle["entries"]
-    dataset_summary = dataset_bundle["summary"]
-    explicit_sources = any(
-        value is not None
-        for value in (
-            args.pep,
-            args.cds,
-            args.domains,
-            args.domains_individual,
-            args.cases,
-            args.evidence_dir,
-        )
+    constructs = compute_constructs(dataset_bundle["entries"], params)
+    input_summary = build_input_summary(
+        cwd=cwd,
+        input_dir=paths["input_dir"],
+        pep_path=pep_path,
+        cds_path=cds_path,
+        domains_path=domains_path,
+        explicit_sources=paths["explicit_sources"],
     )
-    input_summary = (
-        " | ".join(
-            [
-                f"pep={format_path_for_display(pep_path, cwd)}",
-                f"cds={format_path_for_display(cds_path, cwd)}",
-                f"domains={format_path_for_display(domains_path, cwd) if domains_path else 'none'}",
-            ]
-        )
-        if explicit_sources
-        else format_path_for_display(input_dir, cwd)
+    payload = build_dataset_payload(
+        bundle=dataset_bundle,
+        constructs=constructs,
+        params=params,
+        input_summary=input_summary,
+        generated_at=datetime.now(timezone.utc).isoformat(),
     )
-
-    payload = {
-        "dataset": dataset,
-        "datasetSummary": {
-            "counts": dataset_summary,
-            "display": summarize_dataset_for_display(dataset_summary),
-        },
-        "defaultParams": params,
-        "codonTable": CODON_TABLE,
-        "inputSummary": input_summary,
-        "generatedAt": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
-    }
-    payload_json = json.dumps(payload, separators=(",", ":")).replace("</", "<\\/")
-    html_text = render_html(payload_json)
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    output_path.write_text(html_text, encoding="utf-8")
+    report_from_bundle(payload, output_path)
     print(f"Wrote {output_path}")
-    for line in format_run_summary_lines(dataset_summary):
+    for line in format_run_summary_lines(dataset_bundle["summary"]):
         print(line)
+
+
+def generate_main(argv: list[str] | None = None) -> None:
+    args = parse_generate_args(argv)
+    cwd = Path.cwd()
+    project_root = Path(__file__).resolve().parents[2]
+    paths = resolve_cli_inputs(
+        cwd=cwd,
+        project_root=project_root,
+        input_dir_arg=args.input_dir,
+        pep_arg=args.pep,
+        cds_arg=args.cds,
+        domains_arg=args.domains,
+        domains_individual_arg=args.domains_individual,
+        cases_arg=args.cases,
+        evidence_dir_arg=args.evidence_dir,
+    )
+    output_dir = resolve_path(cwd, args.output_dir) or cwd
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    pep_path = paths["pep_path"]
+    cds_path = paths["cds_path"]
+    domains_path = paths["domains_path"]
+    for required_path in (pep_path, cds_path):
+        if not required_path.exists():
+            raise FileNotFoundError(f"Required input file not found: {required_path}")
+    if domains_path and not domains_path.exists():
+        raise FileNotFoundError(f"Optional domain file was requested but not found: {domains_path}")
+
+    params = build_params(
+        slop=args.slop,
+        offset=args.offset,
+        min_structured_run=args.min_structured_run,
+        n_terminal_snap_threshold=args.n_terminal_snap_threshold,
+    )
+    dataset_bundle = load_dataset_bundle(
+        pep_path=pep_path,
+        cds_path=cds_path,
+        domains_path=domains_path,
+        domains_individual_path=paths["domains_individual_path"],
+        cases_path=paths["cases_path"],
+        evidence_root=paths["evidence_root"],
+    )
+    constructs = compute_constructs(dataset_bundle["entries"], params)
+    input_summary = build_input_summary(
+        cwd=cwd,
+        input_dir=paths["input_dir"],
+        pep_path=pep_path,
+        cds_path=cds_path,
+        domains_path=domains_path,
+        explicit_sources=paths["explicit_sources"],
+    )
+
+    write_constructs_tsv(constructs, output_dir / "constructs.tsv")
+    write_constructs_fasta(constructs, output_dir / "constructs.fasta")
+    write_dataset_json(
+        bundle=dataset_bundle,
+        constructs=constructs,
+        params=params,
+        input_summary=input_summary,
+        path=output_dir / "dataset.json",
+    )
+
+    for line in format_run_summary_lines(dataset_bundle["summary"]):
+        print(line)
+    print(f"Wrote {output_dir / 'constructs.tsv'}")
+    print(f"Wrote {output_dir / 'constructs.fasta'}")
+    print(f"Wrote {output_dir / 'dataset.json'}")
 
 
 if __name__ == "__main__":
