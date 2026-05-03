@@ -1251,7 +1251,7 @@ def render_html(payload_json: str) -> str:
 
     .workspace {
       display: grid;
-      grid-template-columns: minmax(260px, 300px) minmax(0, 1fr);
+      grid-template-columns: minmax(320px, 380px) minmax(0, 1fr);
       gap: 8px;
     }
 
@@ -1271,7 +1271,7 @@ def render_html(payload_json: str) -> str:
     }
 
     .batch-panel-header {
-      padding: 6px 8px;
+      padding: 8px 10px 7px;
       border-bottom: 1px solid var(--border-light);
       background: #f4f4f4;
     }
@@ -1279,6 +1279,12 @@ def render_html(payload_json: str) -> str:
     .batch-panel-header h2 {
       margin: 0;
       font-size: 12px;
+    }
+
+    .batch-panel-header p {
+      margin: 3px 0 0;
+      font-size: 10px;
+      color: var(--muted);
     }
 
     .batch-toolbar {
@@ -1314,16 +1320,18 @@ def render_html(payload_json: str) -> str:
     }
 
     .review-row {
-      display: block;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
       width: 100%;
-      padding: 6px 8px;
+      padding: 8px 9px 9px;
       border: none;
       border-bottom: 1px solid var(--border-inner);
       border-left: 3px solid transparent;
       background: var(--panel);
       text-align: left;
       cursor: pointer;
-      min-height: 48px;
+      min-height: 104px;
     }
 
     .review-row:hover {
@@ -1342,23 +1350,50 @@ def render_html(payload_json: str) -> str:
 
     .review-row-top {
       display: flex;
-      align-items: baseline;
+      align-items: flex-start;
       justify-content: space-between;
       gap: 6px;
-      margin-bottom: 2px;
     }
 
     .review-row-top strong {
+      display: block;
       font-size: 12px;
+      line-height: 1.25;
+      margin-bottom: 4px;
     }
 
     .review-row-id {
       font-size: 10px;
       color: var(--muted);
+      line-height: 1.35;
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
       overflow: hidden;
-      text-overflow: ellipsis;
+    }
+
+    .review-row-title {
+      min-width: 0;
+      flex: 1;
+    }
+
+    .review-row-meta {
+      display: flex;
+      gap: 4px;
+      flex-wrap: wrap;
+    }
+
+    .review-mini-pill {
+      display: inline-flex;
+      align-items: center;
+      min-height: 17px;
+      padding: 0 5px;
+      border-radius: 999px;
+      border: 1px solid var(--border-light);
+      background: #f5f5f5;
+      font-size: 9px;
+      color: #555;
       white-space: nowrap;
-      max-width: 180px;
     }
 
     .review-row-dots {
@@ -1389,9 +1424,10 @@ def render_html(payload_json: str) -> str:
 
     .batch-legend {
       display: flex;
-      gap: 8px;
+      gap: 8px 12px;
       align-items: center;
-      padding: 3px 8px;
+      flex-wrap: wrap;
+      padding: 5px 8px;
       border-bottom: 1px solid var(--border-inner);
       background: #f4f4f4;
       font-size: 9px;
@@ -1402,6 +1438,77 @@ def render_html(payload_json: str) -> str:
       display: flex;
       align-items: center;
       gap: 3px;
+    }
+
+    .batch-legend-note {
+      font-weight: 700;
+      color: #555;
+    }
+
+    .batch-legend .status-dot {
+      min-width: 10px;
+      width: 10px;
+      height: 10px;
+      padding: 0;
+      border-radius: 50%;
+      font-size: 0;
+    }
+
+    .review-evidence-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 4px;
+    }
+
+    .review-evidence-chip {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      min-width: 0;
+      padding: 5px 6px;
+      border: 1px solid var(--border-light);
+      border-radius: 4px;
+      background: #fafafa;
+    }
+
+    .review-evidence-chip.dot-green {
+      background: rgba(39, 174, 96, 0.08);
+      border-color: rgba(39, 174, 96, 0.28);
+    }
+
+    .review-evidence-chip.dot-amber {
+      background: rgba(212, 148, 58, 0.10);
+      border-color: rgba(212, 148, 58, 0.30);
+    }
+
+    .review-evidence-chip.dot-red {
+      background: rgba(192, 57, 43, 0.08);
+      border-color: rgba(192, 57, 43, 0.22);
+    }
+
+    .review-evidence-chip.dot-gray {
+      background: #f3f3f3;
+      border-color: #dddddd;
+    }
+
+    .review-evidence-chip-label {
+      font-size: 8px;
+      line-height: 1.1;
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
+      color: #555;
+    }
+
+    .review-evidence-chip-value {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-size: 10px;
+      line-height: 1.2;
+      color: #222;
+      font-weight: 600;
     }
 
     .detail-column {
@@ -2614,6 +2721,98 @@ def render_html(payload_json: str) -> str:
       ];
     }
 
+    function evidenceCards(entry, validation) {
+      const ev = entry.evidence ?? {};
+      const has3d = Boolean(ev.structureModel?.text);
+      const hasDssp = ev.structureDssp?.compatible;
+      const hasUniprot = ev.structureUniprot?.compatible;
+      const hasCons = ev.conservation?.compatible;
+      const hasConsFull = ev.conservationFull?.compatible;
+      const hasIupred = ev.iupred?.compatible;
+      const hasPlddt = ev.plddt?.compatible;
+      const dsspCoverage = Math.round((ev.structureDssp?.coverage ?? 1) * 100);
+
+      const cdsCard = (() => {
+        if (validation.exportReady) {
+          return {
+            label: "CDS",
+            value: "match",
+            cls: "dot-green",
+            title: "CDS: translation matches protein"
+          };
+        }
+        if (validation.translationStatus === "Mismatch") {
+          const parts = ["CDS: translation mismatch"];
+          if (validation.firstMismatchAa !== null) {
+            parts.push(`first divergence at aa ${validation.firstMismatchAa}`);
+          }
+          if (validation.lengthDelta !== 0) {
+            parts.push(
+              `CDS encodes ${validation.cdsPeptideLength} aa (${validation.lengthDelta > 0 ? "+" : ""}${validation.lengthDelta} vs protein)`
+            );
+          }
+          return {
+            label: "CDS",
+            value: "mismatch",
+            cls: "dot-red",
+            title: parts.join(", ")
+          };
+        }
+        return {
+          label: "CDS",
+          value: validation.lengthStatus.toLowerCase(),
+          cls: "dot-amber",
+          title: `CDS: length ${validation.lengthStatus}`
+        };
+      })();
+
+      return [
+        {
+          label: "3D model",
+          value: has3d ? "present" : "absent",
+          cls: has3d ? "dot-green" : "dot-gray",
+          title: has3d ? "3D structure: present" : "3D structure: absent",
+        },
+        {
+          label: "2° structure",
+          value: hasDssp ? `DSSP ${dsspCoverage}%` : hasUniprot ? "UniProt only" : "absent",
+          cls: hasDssp ? (dsspCoverage < 100 ? "dot-amber" : "dot-green") : hasUniprot ? "dot-amber" : "dot-gray",
+          title: hasDssp
+            ? `secondary structure: DSSP (${dsspCoverage}% coverage)`
+            : hasUniprot
+              ? "secondary structure: UniProt only"
+              : has3d
+                ? "secondary structure: absent — DSSP not computed for this protein (PDB available)"
+                : "secondary structure: absent",
+        },
+        {
+          label: "Conservation",
+          value: hasCons && hasConsFull ? "full + DBD" : hasConsFull ? "full only" : hasCons ? "DBD only" : "absent",
+          cls: hasCons || hasConsFull ? "dot-green" : "dot-gray",
+          title: hasCons && hasConsFull
+            ? "conservation: DBD + full"
+            : hasConsFull
+              ? "conservation: full only"
+              : hasCons
+                ? "conservation: DBD only"
+                : "conservation: absent",
+        },
+        {
+          label: "IUPred",
+          value: hasIupred ? "present" : "absent",
+          cls: hasIupred ? "dot-green" : "dot-gray",
+          title: hasIupred ? "IUPred disorder: present" : "IUPred disorder: absent",
+        },
+        {
+          label: "pLDDT",
+          value: hasPlddt ? "present" : "absent",
+          cls: hasPlddt ? "dot-green" : "dot-gray",
+          title: hasPlddt ? "pLDDT: present" : "pLDDT: absent",
+        },
+        cdsCard,
+      ];
+    }
+
     function evidenceSortScore(entry, key) {
       const badges = evidenceBadges(entry);
       const byLetter = Object.fromEntries(badges.map((b) => [b.letter, b.score]));
@@ -2979,6 +3178,7 @@ def render_html(payload_json: str) -> str:
         availableTracks.push({
           type: "numeric",
           label: "Cons full",
+          tooltip: "Full-length orthogroup conservation from a fresh full-protein realignment; higher values mean stronger conservation.",
           coverage: entry.evidence.conservationFull.coverage,
           values: entry.evidence.conservationFull.values,
           height: 44,
@@ -3071,7 +3271,11 @@ def render_html(payload_json: str) -> str:
           `<rect x="0" y="${y}" width="${SVG_W}" height="${row.height}" fill="${bg}" />`,
           `<rect x="0" y="${y}" width="${LABEL_W}" height="${row.height}" fill="#efefef" />`,
           row.type !== "ruler"
-            ? `<text x="${LABEL_W - 6}" y="${y + row.height / 2 - 1}" text-anchor="end" font-size="9" fill="#444" font-weight="700">${escapeHtml(row.label)}</text>`
+            ? (
+                row.tooltip
+                  ? `<g><title>${escapeHtml(row.tooltip)}</title><text x="${LABEL_W - 6}" y="${y + row.height / 2 - 1}" text-anchor="end" font-size="9" fill="#444" font-weight="700">${escapeHtml(row.label)}</text></g>`
+                  : `<text x="${LABEL_W - 6}" y="${y + row.height / 2 - 1}" text-anchor="end" font-size="9" fill="#444" font-weight="700">${escapeHtml(row.label)}</text>`
+              )
             : "",
           row.type !== "ruler"
             ? `<text x="${LABEL_W - 6}" y="${y + row.height / 2 + 8}" text-anchor="end" font-size="8" fill="#777">${Math.round(row.coverage * 100)}%</text>`
@@ -3411,6 +3615,7 @@ def render_html(payload_json: str) -> str:
       batchPanelEl.innerHTML = `
         <div class="batch-panel-header">
           <h2>Proteins (${visibleAnalyses.length})</h2>
+          <p>Each row shows domain context plus the evidence available for that protein.</p>
         </div>
         <div class="batch-toolbar">
           <input id="search-input" value="${escapeHtml(state.search)}" placeholder="Search sequence ID or domain…" aria-label="Search">
@@ -3429,56 +3634,52 @@ def render_html(payload_json: str) -> str:
           </select>
         </div>
         <div class="batch-legend">
-          <span class="batch-legend-item"><span class="status-dot dot-green">3D</span> structure</span>
-          <span class="batch-legend-item"><span class="status-dot dot-green">SS</span> 2° struct</span>
-          <span class="batch-legend-item"><span class="status-dot dot-green">CN</span> conservation</span>
-          <span class="batch-legend-item"><span class="status-dot dot-green">ID</span> IUPred</span>
-          <span class="batch-legend-item"><span class="status-dot dot-green">pL</span> pLDDT</span>
-          <span class="batch-legend-item"><span class="status-dot dot-green">CDS</span> CDS/pep match</span>
-          <span style="margin-left:4px; color: var(--muted)">
-            <span class="status-dot dot-green" style="display:inline-flex"> </span> ok &nbsp;
-            <span class="status-dot dot-amber" style="display:inline-flex"> </span> partial &nbsp;
-            <span class="status-dot dot-red" style="display:inline-flex"> </span> mismatch &nbsp;
-            <span class="status-dot dot-gray" style="display:inline-flex"> </span> absent
-          </span>
+          <span class="batch-legend-note">Tile colors:</span>
+          <span class="batch-legend-item"><span class="status-dot dot-green"></span>available</span>
+          <span class="batch-legend-item"><span class="status-dot dot-amber"></span>partial</span>
+          <span class="batch-legend-item"><span class="status-dot dot-red"></span>mismatch</span>
+          <span class="batch-legend-item"><span class="status-dot dot-gray"></span>absent</span>
         </div>
         <div class="review-list">
           ${
             visibleAnalyses.length
               ? visibleAnalyses
                   .map((analysis) => {
-                    const badges = evidenceBadges(analysis.entry);
                     const active = analysis.entry.id === selectedId;
+                    const activeRange = getActiveRange(analysis);
+                    const evidenceCardsForRow = evidenceCards(analysis.entry, analysis.validation);
                     const domainSummary =
                       analysis.entry.individualDomains.map((d) => d.label).join(", ") ||
                       analysis.entry.mergedDomains.map((d) => d.label).join(", ") ||
                       "no domains";
-
-                    const cdsBadgeCls = analysis.validation.exportReady ? "dot-green"
-                      : analysis.validation.translationStatus === "Mismatch" ? "dot-red"
-                      : "dot-amber";
-                    const cdsBadgeTitle = (() => {
-                      const v = analysis.validation;
-                      if (v.exportReady) return "CDS: translation matches protein";
-                      const parts = [`length: ${v.lengthStatus}`];
-                      if (v.translationStatus === "Mismatch") {
-                        parts.push(`translation mismatch`);
-                        if (v.firstMismatchAa !== null) parts.push(`first divergence at aa ${v.firstMismatchAa}`);
-                        if (v.lengthDelta !== 0) parts.push(`CDS encodes ${v.cdsPeptideLength} aa (${v.lengthDelta > 0 ? "+" : ""}${v.lengthDelta} vs protein)`);
-                      }
-                      return "CDS: " + parts.join(", ");
-                    })();
+                    const rangeSource = state.manualRanges[analysis.entry.id]
+                      ? "manual"
+                      : (analysis.suggestion.recommendedKey ?? analysis.entry.reference?.picked_range_name ?? "range");
+                    const rangeStatus = analysis.entry.reference?.status_range ?? "";
+                    const structureStatus = analysis.entry.reference?.status_structure ?? "";
 
                     return `
-                      <button type="button" class="review-row ${active ? "review-row-active" : ""}" data-select-id="${escapeHtml(analysis.entry.id)}">
+                      <button type="button" class="review-row ${active ? "review-row-active" : ""}" data-select-id="${escapeHtml(analysis.entry.id)}" data-range-status="${escapeHtml(rangeStatus)}">
                         <div class="review-row-top">
-                          <strong>${escapeHtml(analysis.entry.id)}</strong>
-                          <span class="review-row-dots">
-                            ${badges.map((b) => `<span class="status-dot ${b.cls}" title="${escapeHtml(b.title)}">${b.letter}</span>`).join("")}
-                            <span class="status-dot ${cdsBadgeCls}" title="${escapeHtml(cdsBadgeTitle)}" style="margin-left:3px">CDS</span>
-                          </span>
+                          <div class="review-row-title">
+                            <strong>${escapeHtml(analysis.entry.id)}</strong>
+                            <div class="review-row-meta">
+                              <span class="review-mini-pill">${analysis.entry.proteinSequence.length} aa</span>
+                              <span class="review-mini-pill ${state.manualRanges[analysis.entry.id] ? "pill-blue" : ""}">${escapeHtml(rangeSource)}: ${escapeHtml(formatRange(activeRange))}</span>
+                              ${rangeStatus ? `<span class="review-mini-pill ${dotToTone(rangeStatus)}">range: ${escapeHtml(rangeStatus)}</span>` : ""}
+                              ${structureStatus ? `<span class="review-mini-pill ${dotToTone(structureStatus)}">structure: ${escapeHtml(structureStatus)}</span>` : ""}
+                            </div>
+                          </div>
                         </div>
                         <div class="review-row-id">${escapeHtml(domainSummary)}</div>
+                        <div class="review-evidence-grid">
+                          ${evidenceCardsForRow.map((card) => `
+                            <div class="review-evidence-chip ${card.cls}" title="${escapeHtml(card.title)}">
+                              <span class="review-evidence-chip-label">${escapeHtml(card.label)}</span>
+                              <span class="review-evidence-chip-value">${escapeHtml(card.value)}</span>
+                            </div>
+                          `).join("")}
+                        </div>
                       </button>
                     `;
                   })

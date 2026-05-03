@@ -68,6 +68,118 @@ SEQUENCE
 0.61,0.85,0.79,...       # comma-separated floats
 ```
 
+#### Detailed provenance for `conservation/` and `conservation_full/`
+
+Both conservation tracks come from the upstream `../../probe_design` analysis, but they are produced from different alignments and represent slightly different biological contexts.
+
+**`conservation/`**
+
+- Source path in the upstream workflow: `../../probe_design/results/conservation/<ID>.out`
+- Purpose: per-residue conservation on the older TFevol alignment that was already clipped around the DNA-binding domain or family-defining region
+- Typical usage in the report: a domain-centric conservation view that is often useful for seeing how strongly the annotated core region is conserved
+
+The upstream recipe in `../../probe_design/README.md` builds this track by:
+
+1. Building an `ID -> orthology group` mapping from TFevol `gene_trees/*groups.csv`.
+2. Looking up the corresponding TFevol alignment in `.../results/align/<HG>.aln.fasta`.
+3. Extracting the target sequence from that alignment.
+4. Running `../../probe_design/scripts/aln_parse.py --remove-gaps` so that only non-gap positions in the target are retained.
+
+That means `conservation/` is based on an existing alignment that may already have been clipped or filtered for phylogenetic purposes, rather than a fresh full-length realignment.
+
+**`conservation_full/`**
+
+- Source path in the upstream workflow: `../../probe_design/results/conservation_full/<ID>.out`
+- Purpose: full-length per-residue conservation over a fresh realignment of all proteins from the same orthology group as the target
+- Typical usage in the report: broad construct-design context, especially for evaluating whether suggested termini extend into well-conserved or poorly conserved flanking sequence
+
+This track was introduced because the clipped TFevol alignment is not ideal for judging full-length construct boundaries. The upstream note in `../../probe_design/README.md` explicitly states that a better conservation profile should come from realigning whole sequences from the same orthology group, rather than using the already clipped alignment.
+
+The upstream generation logic for `conservation_full/` is:
+
+1. Concatenate the TFevol `*groups.csv` files to obtain a global `ID -> orthology group` lookup.
+2. For a given target `ID`, identify all proteins assigned to the same orthology group.
+3. Fetch those full-length protein sequences from the merged Nematostella protein FASTA with `samtools faidx`.
+4. Write them to `tmp/realign/<ID>.fasta`.
+5. Realign that orthology-group FASTA with `famsa`, producing `tmp/realign/<ID>.aln`.
+6. Extract the ungapped target sequence itself into the output file.
+7. Run `../../probe_design/scripts/aln_parse.py -i tmp/realign/<ID>.aln -id <ID>` and append the computed scores to the same output file.
+
+The command pattern documented upstream is:
+
+```bash
+PROBE=../../probe_design
+TMP_DIR=$PROBE/tmp/realign
+OUTDIR=$PROBE/results/conservation_full
+
+# Fetch the orthology-group FASTA for each target ID first
+famsa -t 12 "$TMP_DIR/<ID>.fasta" "$TMP_DIR/<ID>.aln"
+samtools faidx "$TMP_DIR/<ID>.fasta" <ID> | bioawk -c fastx '{print $seq}' > "$OUTDIR/<ID>.out"
+python "$PROBE/scripts/aln_parse.py" -i "$TMP_DIR/<ID>.aln" -id <ID> >> "$OUTDIR/<ID>.out"
+```
+
+##### Scoring function
+
+`../../probe_design/scripts/aln_parse.py` contains two candidate scoring functions:
+
+- `shannon_entropy(column)`
+- `conservation_score(column)`
+
+Despite the argument parser description mentioning Shannon entropy, the active implementation uses `conservation_score(column)`, not entropy. The script currently computes:
+
+```text
+most_common_residue_count / column_length
+```
+
+for every alignment column, rounded to 2 decimals. So the score is a simple majority-frequency conservation score:
+
+- `1.00` means all aligned residues in that column are identical
+- lower values indicate more heterogeneous columns
+- higher values therefore correspond to stronger conservation
+
+##### On-disk file layout
+
+`construct_report` accepts both 2-line and 3-line conservation files because both exist in the upstream history.
+
+Two-line form:
+
+```text
+SEQUENCE
+0.61,0.85,0.79,...
+```
+
+Three-line form:
+
+```text
+SEQUENCE
+ALIGNMENT-WITH-GAPS
+0.61,0.85,0.79,...
+```
+
+Interpretation:
+
+- line 1: ungapped target protein sequence
+- line 2: aligned target sequence from the MSA, including `-` gap characters
+- line 3: one conservation value per alignment column
+
+When `construct_report` loads a 3-line conservation file, it removes values at positions where line 2 contains a gap before mapping the scores back to the ungapped target sequence. This mirrors the upstream R logic in `../../probe_design/pick_ranges.R`, where `.load_conservation()` strips scores for `aln == '-'`.
+
+##### Relationship to the report
+
+- `conservation/` is rendered as the `Cons DBD` numeric track
+- `conservation_full/` is rendered as the `Cons full` numeric track
+- both are optional; missing or empty files are skipped with warnings
+- matching is by protein ID prefix, not by an external manifest
+
+For the bundled example datasets, the files under:
+
+- `examples/fulldata/evidence/conservation/`
+- `examples/fulldata/evidence/conservation_full/`
+- `examples/test/evidence/conservation/`
+- `examples/test/evidence/conservation_full/`
+
+were copied from the corresponding upstream `../../probe_design/results/...` directories for proteins present in the example FASTAs.
+
 **`iupred/`** — one tab-separated line per protein:
 ```
 SEQUENCE<TAB>0.2764,0.2680,0.2680,...

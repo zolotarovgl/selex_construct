@@ -236,8 +236,14 @@ Those commands use the bundled `examples/test/` dataset and write both the inter
 
 ### `conservation/` and `conservation_full/`
 
-These are numeric per-residue tracks computed from the phylogeny pipeline alignments.  
-They are suppposed to help to see which positions are conserved among the sequences from the same homology group.   
+These are numeric per-residue conservation tracks derived from upstream orthology-group alignments.
+
+- `conservation/`
+  is the older domain-focused track computed from the TFevol alignment that was already clipped around the DNA-binding domain.
+- `conservation_full/`
+  is the full-length orthology-group track copied from `../../probe_design/results/conservation_full/<ID>.out` when the bundled example data are prepared.
+
+`conservation_full/` is generally the more informative track for construct design, because it comes from a fresh full-length realignment of proteins from the same orthology group as the target protein. The detailed upstream provenance, commands, and scoring notes are documented in [docs/Instructions.md](/home/grygoriyzolotarov/Documents/projects/2025_nvec_motif/construct_design/construct_report/docs/Instructions.md:62).
 
 Supported formats:
 
@@ -314,8 +320,8 @@ Sources for evidence files:
 |----------|-------------|
 | PDB structures | `~/ant/gzolotarov/projects/2021_TFevol/folding/results_nvec/{ID}.1.alphafold.pdb` |
 | pLDDT scores | `~/ant/gzolotarov/projects/2021_TFevol/folding/results_nvec/{ID}.1_plddt_mqc.tsv` |
-| Conservation (DBD) | `~/Documents/projects/2025_nvec_motif/probe_design/results/conservation/{ID}.out` |
-| Conservation (full) | `~/Documents/projects/2025_nvec_motif/probe_design/results/conservation_full/{ID}.out` |
+| Conservation (DBD) | `../../probe_design/results/conservation/{ID}.out` |
+| Conservation (full) | `../../probe_design/results/conservation_full/{ID}.out` |
 | DSSP structure | `~/Documents/projects/2025_nvec_motif/probe_design/results/structure/{ID}.out` |
 
 ```bash
