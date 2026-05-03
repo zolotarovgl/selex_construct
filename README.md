@@ -1,12 +1,14 @@
 # HT-SELEX construct design 
 
 `construct_report` is a standalone Python tool that generates a self-contained HTML report for protein construct review.
+Given protein sequences, cds sequences and a bed file with domain annotations, it automatically builds putative HT-SELEX constructs: 
 
-It is intentionally decoupled from the older browser app. The report generator, its example dataset, and its packaging files now live in this directory.
+1. `r1` is built from the merged domain span.
+2. `r2` adds the requested `slop` on both sides.
+3. `r3` expands further if compatible structure tracks contain structured runs near the `r2` boundaries.
+4. If the resulting start is near the N-terminus, it can snap to residue `1`.
 
-# TODOs: 
-
-- [ ] - add a data generation pipeline? as a separate dicreotyr? 
+![](img/ranges.png)
 
 
 # Manual   
@@ -158,14 +160,7 @@ These feed the report’s `r1`, `r2`, and `r3` suggestions:
 - `r2`: `r1` expanded by `± slop`
 - `r3`: structure-aware extension of `r2`
 
-In practice, the flow is:
 
-1. `r1` is built from the merged domain span.
-2. `r2` adds the requested `slop` on both sides.
-3. `r3` expands further if compatible structure tracks contain structured runs near the `r2` boundaries.
-4. If the resulting start is near the N-terminus, it can snap to residue `1`.
-
-![](img/ranges.png)
 
 ## Example Run
 
@@ -230,7 +225,14 @@ To see the structures, add the structure .pdb files to the `examples/eviddence/s
 
 Gather the locally folded structures to test the structure display: 
 ```bash
-cat examples/cds.fasta  | grep '>' | awk '{print $1}' | sed -E 's/>//g' > test.ids
+# pdb files
+cat examples/domains.individual.all.bed | cut -f 1 | sort | uniq  | head -n 100 > test.ids
+cat examples/domains.individual.all.bed | grep -f test.ids > examples/domains.individual.bed
 ls ~/ant/gzolotarov/projects/2021_TFevol/folding/results_nvec/*pdb | grep -f test.ids | grep '.1.alphafold' > fofn
 for FILE in $(cat fofn); do echo $FILE;PREF=$(basename $FILE | sed 's/.1.alphafold.pdb//g'); echo $PREF; cp $FILE examples/evidence/structures/${PREF}.pdb; done
+
+# plddt scores 
+ls ~/ant/gzolotarov/projects/2021_TFevol/folding/results_nvec/*.tsv | grep -f test.ids | grep '.1_plddt' > fofn
+for FILE in $(cat fofn); do echo $FILE;PREF=$(basename $FILE | sed 's/.1_plddt_mqc.tsv//g'); echo $PREF; cp $FILE examples/evidence/structures/${PREF}.tsv; done
+
 ```
