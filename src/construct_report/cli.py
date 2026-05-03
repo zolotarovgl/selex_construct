@@ -413,6 +413,45 @@ def build_structure_model_mapping(
     }
 
 
+_CRYST1 = "CRYST1    1.000    1.000    1.000  90.00  90.00  90.00 P 1           1\n"
+
+
+def compute_dssp_from_pdb(pdb_path: Path, pdb_text: str) -> dict[str, Any] | None:
+    """Run DSSP on an AlphaFold PDB and return a raw_track dict for map_structure_track."""
+    try:
+        import tempfile
+        import os
+        from Bio.PDB import PDBParser
+        from Bio.PDB.DSSP import DSSP
+
+        fixed = _CRYST1 + pdb_text
+        with tempfile.NamedTemporaryFile(suffix=".pdb", mode="w", delete=False) as tmp:
+            tmp.write(fixed)
+            tmp_path = tmp.name
+        try:
+            parser = PDBParser(QUIET=True)
+            structure = parser.get_structure("model", tmp_path)
+            model = structure[0]
+            dssp = DSSP(model, tmp_path)
+        finally:
+            os.unlink(tmp_path)
+
+        seq, ss = [], []
+        for key in dssp.keys():
+            d = dssp[key]
+            aa = d[1] if d[1] != "X" else "?"
+            s = d[2] if d[2] != " " else "-"
+            seq.append(aa)
+            ss.append(s)
+
+        if not seq:
+            return None
+        return {"sequence": "".join(seq), "values": ss}
+    except Exception as exc:
+        print(f"WARNING: DSSP computation failed for {pdb_path.name}: {exc}", file=sys.stderr)
+        return None
+
+
 def build_evidence_for_protein(
     protein_id: str,
     protein_sequence: str,
@@ -466,6 +505,15 @@ def build_evidence_for_protein(
     if matching_structures:
         structure_path = matching_structures[0]
         structure_text = structure_path.read_text(encoding="utf-8")
+
+        # Compute DSSP from PDB when no pre-computed file is available
+        if "structureDssp" not in bundle:
+            raw_dssp = compute_dssp_from_pdb(structure_path, structure_text)
+            if raw_dssp:
+                bundle["structureDssp"] = map_structure_track(
+                    protein_sequence, "structureDssp", raw_dssp
+                )
+
         bundle["structureModel"] = {
             "format": structure_path.suffix.lstrip(".") or "pdb",
             "source": structure_path.name,
@@ -711,7 +759,8 @@ def render_html(payload_json: str) -> str:
       --amber: #d4943a;
       --info: #2868a0;
       --shadow: 1px 1px 2px rgba(0, 0, 0, 0.1);
-      --font-ui: "Courier New", monospace;
+      --font-ui: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      --font-mono: "SFMono-Regular", "Menlo", "Consolas", "Courier New", monospace;
     }
 
     * {
@@ -724,8 +773,8 @@ def render_html(payload_json: str) -> str:
       background: var(--bg);
       color: var(--ink);
       font-family: var(--font-ui);
-      font-size: 13px;
-      line-height: 1.4;
+      font-size: 15px;
+      line-height: 1.5;
     }
 
     a {
@@ -764,11 +813,11 @@ def render_html(payload_json: str) -> str:
     }
 
     .app-toolbar-title strong {
-      font-size: 14px;
+      font-size: 16px;
     }
 
     .app-toolbar-title span {
-      font-size: 11px;
+      font-size: 12px;
       color: var(--muted);
     }
 
@@ -1295,6 +1344,9 @@ def render_html(payload_json: str) -> str:
       background: #fff;
       border-radius: 2px;
       overflow-x: auto;
+      font-family: var(--font-mono);
+      font-size: 12px;
+      line-height: 1.5;
     }
 
     .seq-pre {
@@ -1676,9 +1728,28 @@ def render_html(payload_json: str) -> str:
       const translated = translateDna(entry.cdsSequence).replace(/\*$/, "");
       const translationStatus = translated === entry.proteinSequence ? "Match" : "Mismatch";
 
+      // Find first divergence position for diagnostic detail
+      let firstMismatchAa = null;
+      if (translationStatus === "Mismatch") {
+        const minLen = Math.min(translated.length, entry.proteinSequence.length);
+        for (let i = 0; i < minLen; i++) {
+          if (translated[i] !== entry.proteinSequence[i]) {
+            firstMismatchAa = i + 1;
+            break;
+          }
+        }
+        if (firstMismatchAa === null) firstMismatchAa = minLen + 1;
+      }
+
+      const cdsPeptideLength = translated.length;
+      const lengthDelta = cdsPeptideLength - proteinLength;
+
       return {
         lengthStatus,
         translationStatus,
+        firstMismatchAa,
+        cdsPeptideLength,
+        lengthDelta,
         exportReady:
           (lengthStatus === "Match" || lengthStatus === "MatchSTOP") &&
           translationStatus === "Match"
@@ -2057,6 +2128,18 @@ def render_html(payload_json: str) -> str:
       const hasCons = ev.conservation?.compatible;
       const hasConsFull = ev.conservationFull?.compatible;
       const hasPlddt = ev.plddt?.compatible;
+
+      let ssTitle;
+      if (hasDssp) {
+        ssTitle = `secondary structure: DSSP (${Math.round((ev.structureDssp.coverage ?? 1) * 100)}% coverage)`;
+      } else if (hasUniprot) {
+        ssTitle = "secondary structure: UniProt only";
+      } else if (has3d) {
+        ssTitle = "secondary structure: absent — DSSP not computed for this protein (PDB available)";
+      } else {
+        ssTitle = "secondary structure: absent";
+      }
+
       return [
         {
           letter: "3D",
@@ -2066,9 +2149,7 @@ def render_html(payload_json: str) -> str:
         },
         {
           letter: "SS",
-          title: hasDssp
-            ? `secondary structure: DSSP (${Math.round((ev.structureDssp.coverage ?? 1) * 100)}% coverage)`
-            : hasUniprot ? "secondary structure: UniProt only" : "secondary structure: absent",
+          title: ssTitle,
           cls: hasDssp
             ? ((ev.structureDssp.coverage ?? 1) < 1 ? "dot-amber" : "dot-green")
             : hasUniprot ? "dot-amber" : "dot-gray",
@@ -2160,7 +2241,7 @@ def render_html(payload_json: str) -> str:
       const GAP = 3;
       const mergedDomains = effectiveMergedDomains(entry);
       const hasIndividualDomains = entry.individualDomains.length > 0;
-      const individualLaneHeight = 10;
+      const individualLaneHeight = 11;
       const individualLaneGap = 4;
 
       function layoutIndividualDomains(domains) {
@@ -2200,9 +2281,15 @@ def render_html(payload_json: str) -> str:
             6 // bottom padding
           )
         : 54;
+      const RANGES_LANE_H = 13;
+      const RANGES_GAP = 4;
+      const RANGES_PAD = 8;
+      const rangesRowHeight = RANGES_PAD + candidates.length * RANGES_LANE_H + Math.max(0, candidates.length - 1) * RANGES_GAP + RANGES_PAD;
+
       const rows = [
-        { label: "", height: 30, type: "ruler" },
-        { label: "Domains", height: domainRowHeight, type: "domains" }
+        { label: "", height: 33, type: "ruler" },
+        { label: "Domains", height: domainRowHeight, type: "domains" },
+        { label: "Ranges", height: rangesRowHeight, type: "ranges" }
       ];
 
       function xPos(pos) {
@@ -2218,16 +2305,10 @@ def render_html(payload_json: str) -> str:
       const r3 = candidateByKey.r3 ?? null;
       const r1Segments = r1?.segments?.length ? r1.segments : [];
       const r2Segments = r2?.segments?.length ? r2.segments : [];
-      const tickInterval =
+      const majorInterval =
         entry.proteinSequence.length > 400 ? 100 : entry.proteinSequence.length > 150 ? 50 : 25;
-
-      const ticks = [1];
-      for (let pos = tickInterval; pos < entry.proteinSequence.length; pos += tickInterval) {
-        ticks.push(pos);
-      }
-      if (ticks[ticks.length - 1] !== entry.proteinSequence.length) {
-        ticks.push(entry.proteinSequence.length);
-      }
+      const pxPerAA = TRACK_W / Math.max(1, entry.proteinSequence.length - 1);
+      const showMinorTicks = pxPerAA >= 1.5; // per-AA ticks only when there's visible space
 
       const trackTops = [];
       let totalHeight = 0;
@@ -2253,6 +2334,7 @@ def render_html(payload_json: str) -> str:
       }
 
       const domainRowTop = trackTops[1];
+      const rangesRowTop = trackTops[2];
       const individualLabelY = domainRowTop + 14;
       const individualTrackTop = domainRowTop + 20;
       const individualBlockHeight =
@@ -2260,7 +2342,7 @@ def render_html(payload_json: str) -> str:
         Math.max(0, individualLaneCount - 1) * individualLaneGap;
       const mergedLabelY = hasIndividualDomains ? individualTrackTop + individualBlockHeight + 16 : domainRowTop + 14;
       const mergedY = hasIndividualDomains ? mergedLabelY + 4 : domainRowTop + 7;
-      const mergedHeight = hasIndividualDomains ? 12 : 18;
+      const mergedHeight = hasIndividualDomains ? 13 : 20;
 
       rows.forEach((row, index) => {
         const y = trackTops[index];
@@ -2285,6 +2367,17 @@ def render_html(payload_json: str) -> str:
         );
       });
 
+      // range bars: one lane per candidate (r1 / r2 / r3)
+      candidates.forEach((candidate, idx) => {
+        const color = candidateColors[candidate.key] ?? "#888";
+        const laneY = rangesRowTop + RANGES_PAD + idx * (RANGES_LANE_H + RANGES_GAP);
+        const x = xPos(candidate.start);
+        const width = Math.max(4, xPos(candidate.end) - x);
+        const rangeLabel = `${candidate.key}: ${candidate.start}–${candidate.end}`;
+        const domainObj = { label: rangeLabel, start: candidate.start, end: candidate.end };
+        pushLabeledDomainBox("candidate", domainObj, x, laneY, width, RANGES_LANE_H, color, 0.75, 8);
+      });
+
       svg.push(
         `<rect x="${selectedStartX}" y="0" width="${Math.max(0, selectedEndX - selectedStartX)}"` +
           ` height="${totalHeight}" fill="rgba(44,62,80,0.10)" />`
@@ -2293,11 +2386,35 @@ def render_html(payload_json: str) -> str:
       const rulerY = trackTops[0];
       const rulerBaseline = rulerY + rows[0].height - 2;
       svg.push(`<line x1="${LABEL_W}" y1="${rulerBaseline}" x2="${SVG_W}" y2="${rulerBaseline}" stroke="#bbb" stroke-width="1" />`);
-      ticks.forEach((pos) => {
+
+      // minor ticks: every 1 AA (only when there's visible space)
+      if (showMinorTicks) {
+        for (let pos = 1; pos <= entry.proteinSequence.length; pos++) {
+          if (pos % 10 === 0 || pos === 1 || pos === entry.proteinSequence.length) continue;
+          const x = xPos(pos);
+          svg.push(`<line x1="${x}" y1="${rulerBaseline - 2}" x2="${x}" y2="${rulerBaseline}" stroke="#ccc" stroke-width="0.5" />`);
+        }
+      }
+
+      // medium ticks: every 10 AA (with label)
+      for (let pos = 10; pos <= entry.proteinSequence.length; pos += 10) {
+        if (pos % majorInterval === 0) continue; // major tick will cover this
         const x = xPos(pos);
         svg.push(
-          `<line x1="${x}" y1="${rulerBaseline - 5}" x2="${x}" y2="${rulerBaseline}" stroke="#999" stroke-width="1" />`,
-          `<text x="${x}" y="${rulerBaseline - 7}" text-anchor="middle" font-size="8" fill="#666">${pos}</text>`
+          `<line x1="${x}" y1="${rulerBaseline - 4}" x2="${x}" y2="${rulerBaseline}" stroke="#aaa" stroke-width="0.75" />`,
+          `<text x="${x}" y="${rulerBaseline - 6}" text-anchor="middle" font-size="7" fill="#999">${pos}</text>`
+        );
+      }
+
+      // major ticks: labeled at majorInterval (and first/last)
+      const majorTicks = [1];
+      for (let pos = majorInterval; pos < entry.proteinSequence.length; pos += majorInterval) majorTicks.push(pos);
+      if (majorTicks[majorTicks.length - 1] !== entry.proteinSequence.length) majorTicks.push(entry.proteinSequence.length);
+      majorTicks.forEach((pos) => {
+        const x = xPos(pos);
+        svg.push(
+          `<line x1="${x}" y1="${rulerBaseline - 7}" x2="${x}" y2="${rulerBaseline}" stroke="#999" stroke-width="1" />`,
+          `<text x="${x}" y="${rulerBaseline - 9}" text-anchor="middle" font-size="8" fill="#666">${pos}</text>`
         );
       });
 
@@ -2428,7 +2545,7 @@ def render_html(payload_json: str) -> str:
           label: "DSSP SS",
           coverage: entry.evidence.structureDssp.coverage,
           values: entry.evidence.structureDssp.values,
-          height: 22
+          height: 24
         });
       }
       if (entry.evidence.structureUniprot?.compatible) {
@@ -2437,7 +2554,7 @@ def render_html(payload_json: str) -> str:
           label: "UniProt SS",
           coverage: entry.evidence.structureUniprot.coverage,
           values: entry.evidence.structureUniprot.values,
-          height: 22
+          height: 24
         });
       }
       if (entry.evidence.conservationFull?.compatible) {
@@ -2446,7 +2563,7 @@ def render_html(payload_json: str) -> str:
           label: "Cons full",
           coverage: entry.evidence.conservationFull.coverage,
           values: entry.evidence.conservationFull.values,
-          height: 40,
+          height: 44,
           fill: "rgba(58,133,200,0.28)",
           stroke: "#2868a0"
         });
@@ -2457,7 +2574,7 @@ def render_html(payload_json: str) -> str:
           label: "Cons DBD",
           coverage: entry.evidence.conservation.coverage,
           values: entry.evidence.conservation.values,
-          height: 40,
+          height: 44,
           fill: "rgba(39,174,96,0.28)",
           stroke: "#1f7a45"
         });
@@ -2468,7 +2585,7 @@ def render_html(payload_json: str) -> str:
           label: "pLDDT",
           coverage: entry.evidence.plddt.coverage,
           values: entry.evidence.plddt.values,
-          height: 40,
+          height: 44,
           fill: "rgba(215,150,0,0.25)",
           stroke: "#c47d00",
           maxValue: entry.evidence.plddt.maxValue ?? 100
@@ -2495,7 +2612,7 @@ def render_html(payload_json: str) -> str:
         return LABEL_W + ((pos - 1) / (entry.proteinSequence.length - 1)) * TRACK_W;
       }
 
-      const rows = [{ type: "ruler", label: "", height: 24 }, ...availableTracks];
+      const rows = [{ type: "ruler", label: "", height: 26 }, ...availableTracks];
 
       const trackTops = [];
       let totalHeight = 0;
@@ -2579,6 +2696,27 @@ def render_html(payload_json: str) -> str:
                 ...track.values.filter((value) => value !== null && value !== undefined).map(Number)
               );
           const areaPath = buildAreaPath(track.values, xPos, trackTop, trackHeight, maxValue);
+          // y-axis grid lines at 25/50/75% and labels at top/mid/bottom
+          const ySteps = [0, 0.25, 0.5, 0.75, 1.0];
+          ySteps.forEach((frac) => {
+            const lineY = trackTop + trackHeight * (1 - frac);
+            svg.push(
+              `<line x1="${LABEL_W}" y1="${lineY}" x2="${SVG_W}" y2="${lineY}" stroke="#e0e0e0" stroke-width="0.5" stroke-dasharray="3,3" />`
+            );
+          });
+          // y-axis value labels: top, mid, bottom
+          const yAxisLabels = [
+            { frac: 1.0, val: maxValue },
+            { frac: 0.5, val: maxValue / 2 },
+            { frac: 0.0, val: 0 }
+          ];
+          yAxisLabels.forEach(({ frac, val }) => {
+            const labelY = trackTop + trackHeight * (1 - frac);
+            const text = Number.isInteger(val) ? String(val) : val.toFixed(1);
+            svg.push(
+              `<text x="${LABEL_W - 3}" y="${labelY + 3}" text-anchor="end" font-size="7" fill="#999">${text}</text>`
+            );
+          });
           if (areaPath) {
             svg.push(
               `<path d="${areaPath}" fill="${track.fill}" stroke="${track.stroke}" stroke-width="1.2" />`
@@ -2824,9 +2962,11 @@ def render_html(payload_json: str) -> str:
           <span class="batch-legend-item"><span class="status-dot dot-green">SS</span> 2° struct</span>
           <span class="batch-legend-item"><span class="status-dot dot-green">CN</span> conservation</span>
           <span class="batch-legend-item"><span class="status-dot dot-green">pL</span> pLDDT</span>
+          <span class="batch-legend-item"><span class="status-dot dot-green">CDS</span> CDS/pep match</span>
           <span style="margin-left:4px; color: var(--muted)">
-            <span class="status-dot dot-green" style="display:inline-flex"> </span> present &nbsp;
+            <span class="status-dot dot-green" style="display:inline-flex"> </span> ok &nbsp;
             <span class="status-dot dot-amber" style="display:inline-flex"> </span> partial &nbsp;
+            <span class="status-dot dot-red" style="display:inline-flex"> </span> mismatch &nbsp;
             <span class="status-dot dot-gray" style="display:inline-flex"> </span> absent
           </span>
         </div>
@@ -2842,12 +2982,28 @@ def render_html(payload_json: str) -> str:
                       analysis.entry.mergedDomains.map((d) => d.label).join(", ") ||
                       "no domains";
 
+                    const cdsBadgeCls = analysis.validation.exportReady ? "dot-green"
+                      : analysis.validation.translationStatus === "Mismatch" ? "dot-red"
+                      : "dot-amber";
+                    const cdsBadgeTitle = (() => {
+                      const v = analysis.validation;
+                      if (v.exportReady) return "CDS: translation matches protein";
+                      const parts = [`length: ${v.lengthStatus}`];
+                      if (v.translationStatus === "Mismatch") {
+                        parts.push(`translation mismatch`);
+                        if (v.firstMismatchAa !== null) parts.push(`first divergence at aa ${v.firstMismatchAa}`);
+                        if (v.lengthDelta !== 0) parts.push(`CDS encodes ${v.cdsPeptideLength} aa (${v.lengthDelta > 0 ? "+" : ""}${v.lengthDelta} vs protein)`);
+                      }
+                      return "CDS: " + parts.join(", ");
+                    })();
+
                     return `
                       <button type="button" class="review-row ${active ? "review-row-active" : ""}" data-select-id="${escapeHtml(analysis.entry.id)}">
                         <div class="review-row-top">
                           <strong>${escapeHtml(analysis.entry.id)}</strong>
                           <span class="review-row-dots">
                             ${badges.map((b) => `<span class="status-dot ${b.cls}" title="${escapeHtml(b.title)}">${b.letter}</span>`).join("")}
+                            <span class="status-dot ${cdsBadgeCls}" title="${escapeHtml(cdsBadgeTitle)}" style="margin-left:3px">CDS</span>
                           </span>
                         </div>
                         <div class="review-row-id">${escapeHtml(domainSummary)}</div>
@@ -2907,7 +3063,15 @@ def render_html(payload_json: str) -> str:
           <span class="metric-chip">length: ${entry.proteinSequence.length} aa</span>
           <span class="metric-chip ${dotToTone(analysis.validation.lengthStatus)}">CDS: ${escapeHtml(analysis.validation.lengthStatus)}</span>
           <span class="metric-chip">range: ${escapeHtml(formatRange(activeRange))}</span>
-          <span class="metric-chip ${dotToTone(analysis.validation.translationStatus)}">translation: ${escapeHtml(analysis.validation.translationStatus)}</span>
+          ${(() => {
+            const v = analysis.validation;
+            if (v.translationStatus === "Match") {
+              return `<span class="metric-chip ${dotToTone("Match")}">translation: Match</span>`;
+            }
+            const deltaPart = v.lengthDelta !== 0 ? ` (CDS transl. ${v.cdsPeptideLength} aa, delta ${v.lengthDelta > 0 ? "+" : ""}${v.lengthDelta})` : "";
+            const mismatchPart = v.firstMismatchAa !== null ? `, first mismatch aa ${v.firstMismatchAa}` : "";
+            return `<span class="metric-chip ${dotToTone("Mismatch")}" title="${escapeHtml("Translation Mismatch" + deltaPart + mismatchPart)}">translation: Mismatch${mismatchPart}</span>`;
+          })()}
         </div>
 
         <details class="detail-section" open>
@@ -3098,7 +3262,17 @@ def render_html(payload_json: str) -> str:
               </div>
               <div class="summary-card">
                 <span>Translation QC</span>
-                <strong class="${statusClass(analysis.validation.translationStatus)}">${escapeHtml(analysis.validation.translationStatus)}</strong>
+                ${(() => {
+                  const v = analysis.validation;
+                  if (v.translationStatus === "Match") {
+                    return `<strong class="${statusClass("Match")}">Match</strong>`;
+                  }
+                  const detail = [
+                    v.firstMismatchAa !== null ? `first mismatch: aa ${v.firstMismatchAa}` : null,
+                    v.lengthDelta !== 0 ? `CDS encodes ${v.cdsPeptideLength} aa (${v.lengthDelta > 0 ? "+" : ""}${v.lengthDelta})` : null
+                  ].filter(Boolean).join(" · ");
+                  return `<strong class="${statusClass("Mismatch")}">Mismatch</strong>${detail ? `<small style="display:block;font-weight:normal;color:#888;font-size:10px;margin-top:2px">${escapeHtml(detail)}</small>` : ""}`;
+                })()}
               </div>
               <div class="summary-card">
                 <span>AA length</span>

@@ -253,11 +253,6 @@ samtools faidx examples/fulldata/proteins.fasta
 samtools faidx examples/fulldata/cds.fasta
 ```
 
-> **Note:** Use `Nvec_v4_merged_CDS.fasta`, not `Nvec_v4_merged_transcripts.fasta`.
-> The transcripts file includes 5′ UTR, so frame-0 translation does not match the protein.
-> A small number of older `v1g*` gene models may still show a mismatch due to annotation
-> version differences between the protein and CDS FASTAs; these are upstream data issues.
-
 ## Step 2: Build the test subset (30 proteins)
 
 Sources for evidence files:
@@ -278,9 +273,6 @@ Then run the report against the test subset:
 
 ```bash
 python3 generate_report.py \
-  --pep examples/test/proteins.fasta \
-  --cds examples/test/cds.fasta \
-  --domains-individual examples/test/domains.individual.bed \
-  --evidence-dir examples/test/evidence \
+  --input-dir examples/test \
   --output report.html
 ```
