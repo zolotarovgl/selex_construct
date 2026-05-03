@@ -35,8 +35,7 @@ construct-report \
 - a dedicated pipeline for the evidence generation
 - conservation scores - full and dbd 
 - ConSurf (https://github.com/Rostlab/ConSurf) - basically, implements the conservation profiles that I did for the conservation_full. 
-
-
+- Convert TF_list.csv into a useful metadata - names etc. 
 # Manual   
 
 ## Project Layout

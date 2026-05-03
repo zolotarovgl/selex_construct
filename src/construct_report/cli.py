@@ -1922,6 +1922,183 @@ def render_html(payload_json: str) -> str:
       background: #f7f7f7;
     }
 
+    .issue-panel-body {
+      padding: 10px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      background: #fff;
+    }
+
+    .issue-alert {
+      padding: 8px 10px;
+      border: 1px solid var(--border-light);
+      border-left-width: 4px;
+      border-radius: 3px;
+      background: #fafafa;
+      font-size: 11px;
+      color: #333;
+    }
+
+    .issue-alert-danger {
+      border-left-color: var(--bad);
+      background: rgba(192, 57, 43, 0.06);
+    }
+
+    .issue-alert-warning {
+      border-left-color: var(--amber);
+      background: rgba(212, 148, 58, 0.08);
+    }
+
+    .issue-subsection {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .issue-subsection-note {
+      font-size: 11px;
+      color: #555;
+    }
+
+    .issue-legend {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px 12px;
+      font-size: 10px;
+      color: var(--muted);
+    }
+
+    .issue-legend-item {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+    }
+
+    .issue-legend-swatch {
+      width: 14px;
+      height: 11px;
+      border-radius: 2px;
+      border: 1px solid transparent;
+      display: inline-block;
+      flex: 0 0 auto;
+    }
+
+    .issue-legend-swatch-mismatch {
+      background: rgba(192, 57, 43, 0.14);
+      border-color: rgba(192, 57, 43, 0.4);
+    }
+
+    .issue-legend-swatch-missing {
+      background: rgba(212, 148, 58, 0.14);
+      border-color: rgba(212, 148, 58, 0.4);
+    }
+
+    .issue-compare {
+      border: 1px solid var(--border-light);
+      border-radius: 3px;
+      background: #fcfcfc;
+      overflow: hidden;
+    }
+
+    .issue-compare-block {
+      padding: 8px;
+      border-top: 1px solid var(--border-inner);
+    }
+
+    .issue-compare-block:first-child {
+      border-top: none;
+    }
+
+    .issue-compare-row {
+      display: grid;
+      grid-template-columns: 74px 38px minmax(0, 1fr);
+      gap: 8px;
+      align-items: start;
+      font-family: var(--font-mono);
+      font-size: 11px;
+      line-height: 1.45;
+      margin-bottom: 3px;
+    }
+
+    .issue-compare-row:last-child {
+      margin-bottom: 0;
+    }
+
+    .issue-row-label {
+      color: #666;
+      font-weight: 700;
+      text-transform: lowercase;
+    }
+
+    .issue-row-start {
+      color: #888;
+      text-align: right;
+    }
+
+    .issue-row-seq,
+    .issue-row-cds {
+      min-width: 0;
+      white-space: normal;
+      word-break: break-word;
+    }
+
+    .issue-row-seq-diff {
+      color: #999;
+    }
+
+    .issue-char {
+      display: inline-block;
+      min-width: 0.72em;
+      text-align: center;
+      border-radius: 2px;
+    }
+
+    .issue-char-mismatch {
+      background: rgba(192, 57, 43, 0.14);
+      color: #8f2317;
+    }
+
+    .issue-char-missing {
+      background: rgba(212, 148, 58, 0.14);
+      color: #8a5b1f;
+    }
+
+    .issue-diff-char {
+      display: inline-block;
+      min-width: 0.72em;
+      text-align: center;
+    }
+
+    .issue-diff-mismatch {
+      color: #b83a2a;
+      font-weight: 700;
+    }
+
+    .issue-diff-match {
+      color: #b1b1b1;
+    }
+
+    .issue-codon {
+      display: inline-block;
+      min-width: 2.6em;
+      margin-right: 0.38em;
+      text-align: center;
+      border-radius: 2px;
+    }
+
+    .issue-codon-mismatch {
+      background: rgba(192, 57, 43, 0.14);
+      color: #8f2317;
+    }
+
+    .issue-inline-missing {
+      color: #8a5b1f;
+      background: rgba(212, 148, 58, 0.12);
+      padding: 0 3px;
+      border-radius: 2px;
+    }
+
     .structure-pane-wrap {
       display: flex;
       flex-direction: column;
@@ -3548,6 +3725,175 @@ def render_html(payload_json: str) -> str:
       `;
     }
 
+    function hasCdsIssue(analysis, construct) {
+      return (
+        analysis.validation.translationStatus !== "Match" ||
+        !["Match", "MatchSTOP"].includes(analysis.validation.lengthStatus) ||
+        construct.status !== "OK"
+      );
+    }
+
+    function renderComparisonBlocks(expected, observed, cdsSequence, expectedLabel, observedLabel) {
+      const chunkSize = 40;
+      const maxLen = Math.max(expected.length, observed.length);
+      const blocks = [];
+
+      function renderAaChar(char, mismatch) {
+        const display = char || "·";
+        const cls = mismatch
+          ? (char ? "issue-char issue-char-mismatch" : "issue-char issue-char-missing")
+          : "issue-char";
+        return `<span class="${cls}">${escapeHtml(display)}</span>`;
+      }
+
+      function renderDiffChar(mismatch) {
+        return `<span class="issue-diff-char ${mismatch ? "issue-diff-mismatch" : "issue-diff-match"}">${mismatch ? "^" : "|"}</span>`;
+      }
+
+      for (let chunkStart = 0; chunkStart < maxLen; chunkStart += chunkSize) {
+        const chunkEnd = Math.min(maxLen, chunkStart + chunkSize);
+        let expectedHtml = "";
+        let observedHtml = "";
+        let diffHtml = "";
+        let cdsHtml = "";
+
+        for (let index = chunkStart; index < chunkEnd; index += 1) {
+          const expectedChar = expected[index] ?? "";
+          const observedChar = observed[index] ?? "";
+          const mismatch = expectedChar !== observedChar;
+          expectedHtml += renderAaChar(expectedChar, mismatch);
+          observedHtml += renderAaChar(observedChar, mismatch);
+          diffHtml += renderDiffChar(mismatch);
+
+          if (cdsSequence) {
+            const codon = cdsSequence.slice(index * 3, index * 3 + 3);
+            if (codon) {
+              cdsHtml += `<span class="${mismatch ? "issue-codon issue-codon-mismatch" : "issue-codon"}">${escapeHtml(codon)}</span>`;
+            }
+          }
+        }
+
+        blocks.push(`
+          <div class="issue-compare-block">
+            <div class="issue-compare-row">
+              <span class="issue-row-label">${escapeHtml(expectedLabel)}</span>
+              <span class="issue-row-start">${chunkStart + 1}</span>
+              <span class="issue-row-seq">${expectedHtml}</span>
+            </div>
+            <div class="issue-compare-row">
+              <span class="issue-row-label">${escapeHtml(observedLabel)}</span>
+              <span class="issue-row-start">${chunkStart + 1}</span>
+              <span class="issue-row-seq">${observedHtml}</span>
+            </div>
+            <div class="issue-compare-row">
+              <span class="issue-row-label">diff</span>
+              <span class="issue-row-start"></span>
+              <span class="issue-row-seq issue-row-seq-diff">${diffHtml}</span>
+            </div>
+            ${
+              cdsHtml
+                ? `<div class="issue-compare-row">
+                    <span class="issue-row-label">CDS</span>
+                    <span class="issue-row-start">${chunkStart * 3 + 1}</span>
+                    <span class="issue-row-cds">${cdsHtml}</span>
+                  </div>`
+                : ""
+            }
+          </div>
+        `);
+      }
+
+      return `<div class="issue-compare">${blocks.join("")}</div>`;
+    }
+
+    function renderCdsIssuePanel(entry, analysis, activeRange, construct) {
+      const issueSections = [];
+      const requestedCdsRange = toCdsRange(activeRange);
+      const fullTranslation = translateDna(entry.cdsSequence).replace(/\*$/, "");
+      const lengthProblem = !["Match", "MatchSTOP"].includes(analysis.validation.lengthStatus);
+      const constructOverflow = construct.status === "Range exceeds CDS length";
+
+      if (lengthProblem) {
+        const expectedNt = entry.proteinSequence.length * 3;
+        const actualNt = entry.cdsSequence.length;
+        issueSections.push(`
+          <div class="issue-alert issue-alert-warning">
+            Full CDS length does not match the protein record: protein implies ${expectedNt} nt, but the CDS file contains ${actualNt} nt.
+          </div>
+        `);
+      }
+
+      if (analysis.validation.translationStatus !== "Match") {
+        const detailParts = [];
+        if (analysis.validation.firstMismatchAa !== null) {
+          detailParts.push(`first mismatch at aa ${analysis.validation.firstMismatchAa}`);
+        }
+        if (analysis.validation.lengthDelta !== 0) {
+          detailParts.push(`CDS translates to ${analysis.validation.cdsPeptideLength} aa (${analysis.validation.lengthDelta > 0 ? "+" : ""}${analysis.validation.lengthDelta} vs protein)`);
+        }
+        issueSections.push(`
+          <div class="issue-subsection">
+            <div class="controls-section-label">Full protein vs CDS translation</div>
+            <div class="issue-subsection-note">
+              The full CDS does not translate exactly to the protein record${detailParts.length ? `; ${escapeHtml(detailParts.join(", "))}` : ""}.
+            </div>
+            ${renderComparisonBlocks(entry.proteinSequence, fullTranslation, entry.cdsSequence, "protein", "translated")}
+          </div>
+        `);
+      }
+
+      if (construct.status === "Translation mismatch") {
+        issueSections.push(`
+          <div class="issue-subsection">
+            <div class="controls-section-label">Selected construct vs selected CDS translation</div>
+            <div class="issue-subsection-note">
+              The currently selected range ${escapeHtml(formatRange(activeRange))} does not translate cleanly from the selected CDS span ${escapeHtml(formatRange(construct.cdsRange))}.
+            </div>
+            ${renderComparisonBlocks(construct.peptide, construct.translation, construct.cds, "selected AA", "translated")}
+          </div>
+        `);
+      }
+
+      if (constructOverflow) {
+        const cdsStart = (activeRange.start - 1) * 3;
+        const availableTail = entry.cdsSequence.slice(Math.min(cdsStart, entry.cdsSequence.length));
+        const missingNt = Math.max(0, requestedCdsRange.end - entry.cdsSequence.length);
+        issueSections.push(`
+          <div class="issue-subsection">
+            <div class="controls-section-label">Selected range exceeds CDS length</div>
+            <div class="issue-alert issue-alert-danger">
+              The selected AA range ${escapeHtml(formatRange(activeRange))} requires CDS coordinates ${escapeHtml(formatRange(requestedCdsRange))}, but the CDS ends at nt ${entry.cdsSequence.length}.
+            </div>
+            <div class="issue-subsection-note">
+              The highlighted CDS tail below is all that exists from the requested start; ${missingNt} nt are missing beyond the CDS end.
+            </div>
+            <div class="seq-panel">
+              <div class="seq-track-label">Selected peptide</div>
+              <pre class="seq-pre">${escapeHtml(construct.peptide || entry.proteinSequence.slice(activeRange.start - 1, activeRange.end))}</pre>
+              <div class="seq-track-label">Available CDS from requested start</div>
+              <pre class="seq-pre"><mark class="seq-mark">${escapeHtml(availableTail)}</mark><span class="issue-inline-missing">[missing ${missingNt} nt beyond CDS end]</span></pre>
+            </div>
+          </div>
+        `);
+      }
+
+      if (!issueSections.length) {
+        return "";
+      }
+
+      return `
+        <div class="issue-panel-body">
+          <div class="issue-legend">
+            <span class="issue-legend-item"><span class="issue-legend-swatch issue-legend-swatch-mismatch"></span>mismatch</span>
+            <span class="issue-legend-item"><span class="issue-legend-swatch issue-legend-swatch-missing"></span>missing residue / truncated end</span>
+            <span class="issue-legend-item">diff row: <strong>^</strong> mismatch, <strong>|</strong> match</span>
+            <span class="issue-legend-item">missing residues are shown as <strong>·</strong></span>
+          </div>
+          ${issueSections.join("")}
+        </div>
+      `;
+    }
+
     function renderToolbar(selectedAnalysis, analyses) {
       if (!selectedAnalysis) {
         toolbarEl.innerHTML = `
@@ -3729,6 +4075,13 @@ def render_html(payload_json: str) -> str:
       const aaLen = activeRange.end - activeRange.start + 1;
       const cdsLen = construct.cds.length;
       const hasStructureModel = Boolean(entry.evidence.structureModel?.text);
+      const showCdsIssuePanel = hasCdsIssue(analysis, construct);
+      let sectionIndex = 1;
+      const coordinatesSectionIndex = sectionIndex++;
+      const evidenceSectionIndex = sectionIndex++;
+      const structureSectionIndex = hasStructureModel ? sectionIndex++ : null;
+      const cdsIssueSectionIndex = showCdsIssuePanel ? sectionIndex++ : null;
+      const constructSummarySectionIndex = sectionIndex++;
       const coordinateDetailsLabel = state.showCoordinateDetails ? "hide lower details" : "show lower details";
       detailPanelEl.innerHTML = `
         <div class="detail-header">
@@ -3750,7 +4103,7 @@ def render_html(payload_json: str) -> str:
         <details class="detail-section" open>
           <summary class="detail-section-header detail-section-summary">
             <div>
-              <div class="detail-section-index">1. Coordinates and Sequence</div>
+              <div class="detail-section-index">${coordinatesSectionIndex}. Coordinates and Sequence</div>
               <div class="detail-section-copy">Protein coordinates with optional range controls and AA/CDS highlights below.</div>
             </div>
             <div class="section-chip-row">
@@ -3868,7 +4221,7 @@ def render_html(payload_json: str) -> str:
         <details class="detail-section" open>
           <summary class="detail-section-header detail-section-summary">
             <div>
-              <div class="detail-section-index">2. Evidence Tracks</div>
+              <div class="detail-section-index">${evidenceSectionIndex}. Evidence Tracks</div>
               <div class="detail-section-copy">Mapped browser tracks aligned to protein coordinates.</div>
             </div>
             <div class="metric-chip">expand / collapse</div>
@@ -3899,7 +4252,7 @@ def render_html(payload_json: str) -> str:
               <details class="detail-section" open>
                 <summary class="detail-section-header detail-section-summary">
                   <div>
-                    <div class="detail-section-index">3. Structure</div>
+                    <div class="detail-section-index">${structureSectionIndex}. Structure</div>
                     <div class="detail-section-copy">Local protein structure with selected residues colored by their fixed N-to-C position in the full model, from N-terminal red through a C-terminal rainbow.</div>
                   </div>
                   <div class="metric-chip">expand / collapse</div>
@@ -3912,10 +4265,30 @@ def render_html(payload_json: str) -> str:
             : ""
         }
 
+        ${
+          showCdsIssuePanel
+            ? `
+              <details class="detail-section" open>
+                <summary class="detail-section-header detail-section-summary">
+                  <div>
+                    <div class="detail-section-index">${cdsIssueSectionIndex}. CDS / Translation Issues</div>
+                    <div class="detail-section-copy">Explicit mismatch and truncation view for the current protein or selected construct.</div>
+                  </div>
+                  <div class="section-chip-row">
+                    <span class="pill pill-red">needs review</span>
+                    <span class="metric-chip">expand / collapse</span>
+                  </div>
+                </summary>
+                ${renderCdsIssuePanel(entry, analysis, activeRange, construct)}
+              </details>
+            `
+            : ""
+        }
+
         <details class="detail-section" open>
           <summary class="detail-section-header detail-section-summary">
             <div>
-              <div class="detail-section-index">${hasStructureModel ? "4" : "3"}. Construct Summary</div>
+              <div class="detail-section-index">${constructSummarySectionIndex}. Construct Summary</div>
               <div class="detail-section-copy">Final selected AA/CDS span, QC summary, and export preview.</div>
             </div>
             <div class="section-chip-row">
