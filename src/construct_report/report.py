@@ -126,6 +126,7 @@ def normalize_report_payload(payload: dict[str, Any]) -> dict[str, Any]:
         "inputSummary": payload.get("inputSummary", ""),
         "generatedAt": _format_generated_at(payload.get("generatedAt")),
         "customRanges": payload.get("customRanges", {}),
+        "metadataTable": payload.get("metadataTable"),
     }
 
 

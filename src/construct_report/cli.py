@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import argparse
+import csv
+import io
 import json
 import re
 import sys
@@ -182,19 +184,6 @@ def parse_individual_domains(text: str) -> dict[str, list[dict[str, Any]]]:
     return domains
 
 
-def parse_cases(text: str) -> dict[str, dict[str, str]]:
-    lines = clean_lines(text)
-    header = lines[0].split("\t")
-    rows: dict[str, dict[str, str]] = {}
-
-    for line in lines[1:]:
-        values = line.split("\t")
-        row = {key: values[index] if index < len(values) else "" for index, key in enumerate(header)}
-        rows[row["gene"]] = row
-
-    return rows
-
-
 def parse_custom_ranges(text: str) -> dict[str, list[dict[str, Any]]]:
     lines = clean_lines(text)
     if not lines:
@@ -309,6 +298,64 @@ def parse_custom_ranges(text: str) -> dict[str, list[dict[str, Any]]]:
         add_entry(rows, protein_id, start, end, label)
 
     return rows
+
+
+def parse_metadata_table(
+    text: str,
+    allowed_ids: set[str] | None = None,
+) -> dict[str, Any]:
+    if not text.strip():
+        return {"columns": [], "rows": [], "idKey": None}
+
+    sample = "\n".join(text.splitlines()[:5])
+    tab_count = sample.count("\t")
+    comma_count = sample.count(",")
+    delimiter = "\t" if tab_count >= comma_count else ","
+    reader = csv.reader(io.StringIO(text), delimiter=delimiter)
+    rows = [[cell.strip() for cell in row] for row in reader if any(cell.strip() for cell in row)]
+    if not rows:
+        return {"columns": [], "rows": [], "idKey": None}
+
+    raw_header = rows[0]
+    width = max(len(raw_header), *(len(row) for row in rows[1:]))
+    padded_header = raw_header + [""] * (width - len(raw_header))
+
+    header_names: list[str] = []
+    seen_names: dict[str, int] = {}
+    for index, raw_name in enumerate(padded_header):
+        base_name = raw_name.strip().lstrip("\ufeff") or f"column_{index + 1}"
+        occurrence = seen_names.get(base_name, 0)
+        seen_names[base_name] = occurrence + 1
+        header_names.append(base_name if occurrence == 0 else f"{base_name}_{occurrence + 1}")
+
+    lowered = [name.lower() for name in header_names]
+    id_index = lowered.index("gene") if "gene" in lowered else (2 if width >= 3 else 0)
+    ordered_indices = [id_index] + [index for index in range(width) if index != id_index]
+    ordered_columns = [
+        {
+            "key": header_names[index],
+            "label": header_names[index],
+        }
+        for index in ordered_indices
+    ]
+    id_key = header_names[id_index]
+
+    table_rows: list[dict[str, str]] = []
+    for raw_row in rows[1:]:
+        padded_row = raw_row + [""] * (width - len(raw_row))
+        row_map = {header_names[index]: padded_row[index] for index in range(width)}
+        protein_id = row_map.get(id_key, "").strip()
+        if not protein_id:
+            continue
+        if allowed_ids is not None and protein_id not in allowed_ids:
+            continue
+        table_rows.append({column["key"]: row_map.get(column["key"], "") for column in ordered_columns})
+
+    return {
+        "columns": ordered_columns,
+        "rows": table_rows,
+        "idKey": id_key,
+    }
 
 
 def locate_sequence(target: str, query: str) -> int | None:
@@ -717,7 +764,6 @@ def load_dataset_bundle(
     cds_path: Path,
     domains_path: Path | None,
     domains_individual_path: Path | None = None,
-    cases_path: Path | None = None,
     evidence_root: Path | None = None,
 ) -> dict[str, Any]:
     proteins = parse_fasta(pep_path.read_text(encoding="utf-8"))
@@ -730,11 +776,6 @@ def load_dataset_bundle(
     individual_domains = (
         parse_individual_domains(domains_individual_path.read_text(encoding="utf-8"))
         if domains_individual_path and domains_individual_path.exists()
-        else {}
-    )
-    cases = (
-        parse_cases(cases_path.read_text(encoding="utf-8"))
-        if cases_path and cases_path.exists()
         else {}
     )
     evidence_files = (
@@ -791,7 +832,6 @@ def load_dataset_bundle(
                     structure_files,
                     plddt_files,
                 ),
-                "reference": cases.get(protein_id),
             }
         )
 
@@ -830,7 +870,6 @@ def load_dataset(
     cds_path: Path,
     domains_path: Path | None,
     domains_individual_path: Path | None = None,
-    cases_path: Path | None = None,
     evidence_root: Path | None = None,
 ) -> list[dict[str, Any]]:
     return load_dataset_bundle(
@@ -838,7 +877,6 @@ def load_dataset(
         cds_path=cds_path,
         domains_path=domains_path,
         domains_individual_path=domains_individual_path,
-        cases_path=cases_path,
         evidence_root=evidence_root,
     )["entries"]
 
@@ -925,7 +963,7 @@ def resolve_cli_inputs(
     domains_arg: str | None,
     domains_individual_arg: str | None,
     custom_ranges_arg: str | None = None,
-    cases_arg: str | None,
+    metadata_arg: str | None = None,
     evidence_dir_arg: str | None,
 ) -> dict[str, Any]:
     input_dir = (
@@ -971,10 +1009,26 @@ def resolve_cli_inputs(
             )
         )
     )
-    cases_path = (
-        resolve_path(cwd, cases_arg)
-        if cases_arg
-        else (None if primary_explicit else input_dir / "cases.tsv")
+    metadata_path = (
+        resolve_path(cwd, metadata_arg)
+        if metadata_arg
+        else (
+            None
+            if primary_explicit
+            else (
+                (input_dir / "metadata.tsv")
+                if (input_dir / "metadata.tsv").exists()
+                else (
+                    (input_dir / "metadata.csv")
+                    if (input_dir / "metadata.csv").exists()
+                    else (
+                        (input_dir / "TF_list.csv")
+                        if (input_dir / "TF_list.csv").exists()
+                        else ((project_root / "TF_list.csv") if (project_root / "TF_list.csv").exists() else None)
+                    )
+                )
+            )
+        )
     )
     evidence_root = (
         resolve_path(cwd, evidence_dir_arg)
@@ -988,7 +1042,7 @@ def resolve_cli_inputs(
             cds_arg,
             domains_arg,
             domains_individual_arg,
-            cases_arg,
+            metadata_arg,
             evidence_dir_arg,
         )
     )
@@ -1000,7 +1054,7 @@ def resolve_cli_inputs(
         "domains_path": domains_path,
         "domains_individual_path": domains_individual_path,
         "custom_ranges_path": custom_ranges_path,
-        "cases_path": cases_path,
+        "metadata_path": metadata_path,
         "evidence_root": evidence_root,
         "explicit_sources": explicit_sources,
     }
@@ -1095,7 +1149,7 @@ def format_resolved_input_lines(
         ("domains", paths["domains_path"]),
         ("individual domains", paths["domains_individual_path"]),
         ("custom ranges", paths["custom_ranges_path"]),
-        ("cases", paths["cases_path"]),
+        ("metadata", paths["metadata_path"]),
         ("evidence dir", paths["evidence_root"]),
     ]
     for label, path in optional_items:
@@ -1129,6 +1183,36 @@ def append_custom_ranges_to_payload(
         if current_summary
         else f"custom={custom_display}"
     )
+    return payload
+
+
+def append_metadata_to_payload(
+    payload: dict[str, Any],
+    metadata_path: Path | None,
+    cwd: Path,
+) -> dict[str, Any]:
+    if not metadata_path:
+        return payload
+
+    dataset_ids = {
+        str(entry.get("id"))
+        for entry in payload.get("dataset", [])
+        if entry.get("id")
+    }
+    metadata_table = parse_metadata_table(
+        metadata_path.read_text(encoding="utf-8"),
+        allowed_ids=dataset_ids or None,
+    )
+    if metadata_table.get("columns") and metadata_table.get("rows"):
+        metadata_table["source"] = format_path_for_display(metadata_path, cwd)
+        payload["metadataTable"] = metadata_table
+        current_summary = str(payload.get("inputSummary", "") or "")
+        metadata_display = format_path_for_display(metadata_path, cwd)
+        payload["inputSummary"] = (
+            f"{current_summary} | metadata={metadata_display}"
+            if current_summary
+            else f"metadata={metadata_display}"
+        )
     return payload
 
 
@@ -1221,6 +1305,36 @@ def render_html(payload_json: str) -> str:
       gap: 8px;
       align-items: center;
       flex-wrap: wrap;
+    }
+
+    .app-tabs {
+      display: flex;
+      gap: 6px;
+      margin-bottom: 8px;
+    }
+
+    .app-tab {
+      appearance: none;
+      border: 1px solid var(--border);
+      background: #f2f2f2;
+      color: #444;
+      font: inherit;
+      font-size: 11px;
+      line-height: 1;
+      padding: 7px 10px;
+      border-radius: 999px;
+      cursor: pointer;
+    }
+
+    .app-tab:hover {
+      background: #eceff2;
+    }
+
+    .app-tab-active {
+      background: #dde7ef;
+      border-color: var(--accent);
+      color: #18384e;
+      font-weight: 700;
     }
 
     .action-button {
@@ -1590,6 +1704,132 @@ def render_html(payload_json: str) -> str:
       border-radius: 3px;
       overflow: hidden;
       background: #fcfcfc;
+    }
+
+    .metadata-panel {
+      display: flex;
+      flex-direction: column;
+      min-height: calc(100vh - 128px);
+      overflow: hidden;
+    }
+
+    .metadata-panel-header {
+      padding: 9px 10px 7px;
+      border-bottom: 1px solid var(--border-light);
+      background: #f4f4f4;
+    }
+
+    .metadata-panel-header h2 {
+      margin: 0;
+      font-size: 13px;
+    }
+
+    .metadata-panel-header p {
+      margin: 3px 0 0;
+      font-size: 10px;
+      color: var(--muted);
+    }
+
+    .metadata-toolbar {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      align-items: center;
+      padding: 8px 10px;
+      border-bottom: 1px solid var(--border-light);
+      background: #fafafa;
+    }
+
+    .metadata-toolbar input {
+      flex: 1 1 280px;
+      min-width: 220px;
+      height: 28px;
+      padding: 0 8px;
+      border: 1px solid var(--border);
+      border-radius: 3px;
+      font-size: 12px;
+    }
+
+    .metadata-toolbar-note {
+      font-size: 11px;
+      color: var(--muted);
+    }
+
+    .metadata-table-wrap {
+      flex: 1;
+      overflow: auto;
+      background: #fff;
+    }
+
+    .metadata-table {
+      width: 100%;
+      border-collapse: collapse;
+      table-layout: auto;
+      min-width: 960px;
+      font-size: 11px;
+    }
+
+    .metadata-table th,
+    .metadata-table td {
+      padding: 7px 8px;
+      border-bottom: 1px solid var(--border-inner);
+      border-right: 1px solid #efefef;
+      vertical-align: top;
+      text-align: left;
+      word-break: break-word;
+      background: #fff;
+    }
+
+    .metadata-table th:last-child,
+    .metadata-table td:last-child {
+      border-right: none;
+    }
+
+    .metadata-table thead th {
+      position: sticky;
+      top: 0;
+      z-index: 1;
+      padding: 0;
+      background: #f1f3f5;
+    }
+
+    .metadata-th-btn {
+      appearance: none;
+      width: 100%;
+      border: none;
+      background: transparent;
+      color: #333;
+      font: inherit;
+      font-size: 11px;
+      font-weight: 700;
+      text-align: left;
+      padding: 8px;
+      cursor: pointer;
+    }
+
+    .metadata-th-btn:hover {
+      background: #e8edf1;
+    }
+
+    .metadata-table tbody tr:nth-child(even) td {
+      background: #fcfcfc;
+    }
+
+    .metadata-id-link {
+      appearance: none;
+      border: none;
+      background: transparent;
+      color: var(--info);
+      font: inherit;
+      font-weight: 700;
+      padding: 0;
+      cursor: pointer;
+      text-decoration: underline;
+      text-underline-offset: 2px;
+    }
+
+    .metadata-id-link:hover {
+      color: #1b4f7a;
     }
 
     .detail-section-header {
@@ -2271,10 +2511,12 @@ def render_html(payload_json: str) -> str:
 <body>
   <main class="app-shell">
     <div id="toolbar" class="app-toolbar"></div>
-    <div class="workspace">
+    <div id="app-tabs" class="app-tabs"></div>
+    <div id="review-page" class="workspace">
       <aside id="batch-panel" class="panel batch-panel"></aside>
       <section id="detail-panel" class="panel detail-column"></section>
     </div>
+    <section id="metadata-page" class="panel metadata-panel" hidden></section>
   </main>
 
   <script src="https://3Dmol.org/build/3Dmol-min.js"></script>
@@ -2286,6 +2528,8 @@ def render_html(payload_json: str) -> str:
     const defaultParams = payload.defaultParams;
     const codonTable = payload.codonTable;
     const customRangeIndex = payload.customRanges ?? {};
+    const metadataTable = payload.metadataTable ?? null;
+    const hasMetadata = Boolean(metadataTable?.columns?.length && metadataTable?.rows?.length);
     const trackPalette = ["#e8b84b", "#3a85c8", "#27ae60", "#9b59b6", "#e74c3c", "#1abc9c", "#d4943a", "#2868a0"];
     const candidateColors = { r1: "#e74c3c", r2: "#e67e22", r3: "#27ae60" };
     const selectedRangeColor = "#111111";
@@ -2319,18 +2563,25 @@ def render_html(payload_json: str) -> str:
       null;
 
     const state = {
+      view: "review",
       params: { ...defaultParams },
       search: "",
       filter: "all",
       sort: "id",
       selectedId: initialEntry?.id ?? "",
       manualRanges: {},
-      showCoordinateDetails: false
+      showCoordinateDetails: false,
+      metadataSearch: "",
+      metadataSortKey: metadataTable?.idKey ?? metadataTable?.columns?.[0]?.key ?? "",
+      metadataSortDir: "asc",
     };
 
     const toolbarEl = document.getElementById("toolbar");
+    const tabsEl = document.getElementById("app-tabs");
+    const reviewPageEl = document.getElementById("review-page");
     const batchPanelEl = document.getElementById("batch-panel");
     const detailPanelEl = document.getElementById("detail-panel");
+    const metadataPageEl = document.getElementById("metadata-page");
 
     let _structureCache = { entryId: null, viewer: null, containerEl: null };
     let _analysesCache = { paramsKey: null, result: null };
@@ -2359,6 +2610,170 @@ def render_html(payload_json: str) -> str:
         .replace(/>/g, "&gt;")
         .replace(/"/g, "&quot;")
         .replace(/'/g, "&#39;");
+    }
+
+    function metadataSortValue(value) {
+      const text = String(value ?? "").trim();
+      if (!text) {
+        return { kind: "empty", value: "" };
+      }
+      if (/^[+-]?(?:\d+\.?\d*|\.\d+)$/.test(text)) {
+        return { kind: "number", value: Number(text) };
+      }
+      return { kind: "text", value: text.toLowerCase() };
+    }
+
+    function compareMetadataRows(rowA, rowB, key, direction) {
+      const left = metadataSortValue(rowA[key] ?? "");
+      const right = metadataSortValue(rowB[key] ?? "");
+      let order = 0;
+      if (left.kind === "empty" && right.kind !== "empty") {
+        order = 1;
+      } else if (left.kind !== "empty" && right.kind === "empty") {
+        order = -1;
+      } else if (left.kind === "number" && right.kind === "number") {
+        order = left.value - right.value;
+      } else {
+        order = String(left.value).localeCompare(String(right.value), undefined, { numeric: true });
+      }
+      if (order === 0 && metadataTable?.idKey && key !== metadataTable.idKey) {
+        order = String(rowA[metadataTable.idKey] ?? "").localeCompare(String(rowB[metadataTable.idKey] ?? ""));
+      }
+      return direction === "desc" ? -order : order;
+    }
+
+    function renderTabs() {
+      if (!hasMetadata) {
+        tabsEl.innerHTML = "";
+        tabsEl.style.display = "none";
+        reviewPageEl.hidden = false;
+        metadataPageEl.hidden = true;
+        return;
+      }
+
+      tabsEl.style.display = "flex";
+      tabsEl.innerHTML = `
+        <button type="button" class="app-tab ${state.view === "review" ? "app-tab-active" : ""}" data-app-view="review">
+          Review
+        </button>
+        <button type="button" class="app-tab ${state.view === "metadata" ? "app-tab-active" : ""}" data-app-view="metadata">
+          Metadata (${metadataTable.rows.length})
+        </button>
+      `;
+      tabsEl.querySelectorAll("[data-app-view]").forEach((button) => {
+        button.addEventListener("click", () => {
+          state.view = button.getAttribute("data-app-view") || "review";
+          render();
+        });
+      });
+
+      reviewPageEl.hidden = state.view !== "review";
+      metadataPageEl.hidden = state.view !== "metadata";
+    }
+
+    function renderMetadataTab() {
+      if (!hasMetadata) {
+        metadataPageEl.innerHTML = `<div class="empty-state">No metadata table is available for this report.</div>`;
+        return;
+      }
+
+      const columns = metadataTable.columns;
+      const searchNeedle = state.metadataSearch.trim().toLowerCase();
+      const filteredRows = metadataTable.rows.filter((row) => {
+        if (!searchNeedle) {
+          return true;
+        }
+        return columns.some((column) => String(row[column.key] ?? "").toLowerCase().includes(searchNeedle));
+      });
+      const sortKey = state.metadataSortKey || metadataTable.idKey || columns[0].key;
+      const sortedRows = filteredRows
+        .slice()
+        .sort((a, b) => compareMetadataRows(a, b, sortKey, state.metadataSortDir));
+
+      metadataPageEl.innerHTML = `
+        <div class="metadata-panel-header">
+          <h2>Metadata Table</h2>
+          <p>${escapeHtml(metadataTable.source || "Optional metadata")} · rows mapped to proteins in this report.</p>
+        </div>
+        <div class="metadata-toolbar">
+          <input
+            id="metadata-search-input"
+            value="${escapeHtml(state.metadataSearch)}"
+            placeholder="Search metadata across all columns…"
+            aria-label="Search metadata"
+          >
+          <span class="metadata-toolbar-note">
+            showing ${sortedRows.length} / ${metadataTable.rows.length} rows · sorted by ${escapeHtml(sortKey)} ${state.metadataSortDir}
+          </span>
+        </div>
+        <div class="metadata-table-wrap">
+          ${
+            sortedRows.length
+              ? `<table class="metadata-table">
+                  <thead>
+                    <tr>
+                      ${columns.map((column) => {
+                        const isActive = state.metadataSortKey === column.key;
+                        const arrow = isActive ? (state.metadataSortDir === "asc" ? " ↑" : " ↓") : "";
+                        return `
+                          <th>
+                            <button type="button" class="metadata-th-btn" data-metadata-sort="${escapeHtml(column.key)}">
+                              ${escapeHtml(column.label)}${arrow}
+                            </button>
+                          </th>
+                        `;
+                      }).join("")}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    ${sortedRows.map((row) => `
+                      <tr>
+                        ${columns.map((column) => {
+                          const value = String(row[column.key] ?? "");
+                          if (column.key === metadataTable.idKey && dataset.some((entry) => entry.id === value)) {
+                            return `<td><button type="button" class="metadata-id-link" data-metadata-select-id="${escapeHtml(value)}">${escapeHtml(value)}</button></td>`;
+                          }
+                          return `<td>${escapeHtml(value)}</td>`;
+                        }).join("")}
+                      </tr>
+                    `).join("")}
+                  </tbody>
+                </table>`
+              : `<div class="empty-state">No metadata rows matched the current search.</div>`
+          }
+        </div>
+      `;
+
+      metadataPageEl.querySelector("#metadata-search-input")?.addEventListener("input", (event) => {
+        state.metadataSearch = event.target.value;
+        render();
+      });
+      metadataPageEl.querySelectorAll("[data-metadata-sort]").forEach((button) => {
+        button.addEventListener("click", () => {
+          const key = button.getAttribute("data-metadata-sort") || "";
+          if (!key) {
+            return;
+          }
+          if (state.metadataSortKey === key) {
+            state.metadataSortDir = state.metadataSortDir === "asc" ? "desc" : "asc";
+          } else {
+            state.metadataSortKey = key;
+            state.metadataSortDir = "asc";
+          }
+          render();
+        });
+      });
+      metadataPageEl.querySelectorAll("[data-metadata-select-id]").forEach((button) => {
+        button.addEventListener("click", () => {
+          const targetId = button.getAttribute("data-metadata-select-id");
+          if (!targetId) {
+            return;
+          }
+          state.selectedId = targetId;
+          state.view = "review";
+          render();
+        });
+      });
     }
 
     function sanitizeDomId(value) {
@@ -4504,11 +4919,17 @@ def render_html(payload_json: str) -> str:
 
       const batchKey = `${state.search}|${state.filter}|${state.sort}|${state.selectedId}`;
       renderToolbar(selectedAnalysis, analyses);
-      if (batchKey !== _lastBatchKey) {
-        renderBatch(visibleAnalyses, state.selectedId);
-        _lastBatchKey = batchKey;
+      renderTabs();
+
+      if (state.view === "review") {
+        if (batchKey !== _lastBatchKey) {
+          renderBatch(visibleAnalyses, state.selectedId);
+          _lastBatchKey = batchKey;
+        }
+        renderDetail(selectedAnalysis);
+      } else {
+        renderMetadataTab();
       }
-      renderDetail(selectedAnalysis);
     }
 
     render();
@@ -4533,6 +4954,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Optional TSV/TAB file with additional construct ranges to overlay in the report. Defaults to <input-dir>/custom_ranges.tsv when present, otherwise <input-dir>/custom_ranges.tab.",
     )
     parser.add_argument(
+        "--metadata",
+        help="Optional metadata TSV/CSV file for the report metadata tab. Defaults to <input-dir>/metadata.tsv, <input-dir>/metadata.csv, <input-dir>/TF_list.csv, or repo-root TF_list.csv when present.",
+    )
+    parser.add_argument(
         "--input-dir",
         help="Base directory used to resolve default input files when explicit paths are omitted. Defaults to the bundled examples/ folder.",
     )
@@ -4552,10 +4977,6 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--domains-individual",
         dest="domains_individual",
         help="Optional per-domain BED/TSV path. Defaults to <input-dir>/domains.individual.bed when present, otherwise <input-dir>/domains.individual.tab.",
-    )
-    parser.add_argument(
-        "--cases",
-        help="Optional cases TSV path. Defaults to <input-dir>/cases.tsv when present.",
     )
     parser.add_argument(
         "--evidence-dir",
@@ -4604,7 +5025,7 @@ def parse_generate_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--cds")
     parser.add_argument("--domains")
     parser.add_argument("--domains-individual", dest="domains_individual")
-    parser.add_argument("--cases")
+    parser.add_argument("--metadata")
     parser.add_argument("--evidence-dir", dest="evidence_dir")
     parser.add_argument("--slop", type=int, default=DEFAULT_PARAMS["slop"])
     parser.add_argument("--offset", type=int, default=DEFAULT_PARAMS["offset"])
@@ -4640,9 +5061,13 @@ def main(argv: list[str] | None = None) -> None:
             raise FileNotFoundError(f"Dataset JSON not found: {dataset_path}")
         payload = json.loads(dataset_path.read_text(encoding="utf-8"))
         custom_ranges_path = resolve_path(cwd, args.custom_ranges) if args.custom_ranges else None
+        metadata_path = resolve_path(cwd, args.metadata) if args.metadata else None
         if custom_ranges_path and not custom_ranges_path.exists():
             raise FileNotFoundError(f"Custom ranges file not found: {custom_ranges_path}")
+        if metadata_path and not metadata_path.exists():
+            raise FileNotFoundError(f"Metadata file not found: {metadata_path}")
         payload = append_custom_ranges_to_payload(payload, custom_ranges_path, cwd)
+        payload = append_metadata_to_payload(payload, metadata_path, cwd)
         output_path.parent.mkdir(parents=True, exist_ok=True)
         report_from_bundle(payload, output_path)
         print(f"Wrote {output_path}")
@@ -4658,7 +5083,7 @@ def main(argv: list[str] | None = None) -> None:
         domains_arg=args.domains,
         domains_individual_arg=args.domains_individual,
         custom_ranges_arg=args.custom_ranges,
-        cases_arg=args.cases,
+        metadata_arg=args.metadata,
         evidence_dir_arg=args.evidence_dir,
     )
 
@@ -4684,7 +5109,6 @@ def main(argv: list[str] | None = None) -> None:
         cds_path=cds_path,
         domains_path=domains_path,
         domains_individual_path=paths["domains_individual_path"],
-        cases_path=paths["cases_path"],
         evidence_root=paths["evidence_root"],
     )
     constructs = compute_constructs(dataset_bundle["entries"], params)
@@ -4704,9 +5128,13 @@ def main(argv: list[str] | None = None) -> None:
         generated_at=datetime.now(timezone.utc).isoformat(),
     )
     custom_ranges_path = paths["custom_ranges_path"]
+    metadata_path = paths["metadata_path"]
     if custom_ranges_path and not custom_ranges_path.exists():
         raise FileNotFoundError(f"Custom ranges file not found: {custom_ranges_path}")
+    if metadata_path and not metadata_path.exists():
+        raise FileNotFoundError(f"Metadata file not found: {metadata_path}")
     payload = append_custom_ranges_to_payload(payload, custom_ranges_path, cwd)
+    payload = append_metadata_to_payload(payload, metadata_path, cwd)
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     report_from_bundle(payload, output_path)
@@ -4727,7 +5155,7 @@ def generate_main(argv: list[str] | None = None) -> None:
         cds_arg=args.cds,
         domains_arg=args.domains,
         domains_individual_arg=args.domains_individual,
-        cases_arg=args.cases,
+        metadata_arg=args.metadata,
         evidence_dir_arg=args.evidence_dir,
     )
     output_dir = resolve_path(cwd, args.output_dir) or cwd
@@ -4755,7 +5183,6 @@ def generate_main(argv: list[str] | None = None) -> None:
         cds_path=cds_path,
         domains_path=domains_path,
         domains_individual_path=paths["domains_individual_path"],
-        cases_path=paths["cases_path"],
         evidence_root=paths["evidence_root"],
     )
     constructs = compute_constructs(dataset_bundle["entries"], params)
@@ -4779,6 +5206,11 @@ def generate_main(argv: list[str] | None = None) -> None:
     dataset_payload = append_custom_ranges_to_payload(
         dataset_payload,
         paths["custom_ranges_path"],
+        cwd,
+    )
+    dataset_payload = append_metadata_to_payload(
+        dataset_payload,
+        paths["metadata_path"],
         cwd,
     )
     (output_dir / "dataset.json").write_text(

@@ -7,6 +7,7 @@ from construct_report.cli import (
     load_dataset_bundle,
     parse_custom_ranges,
     parse_iupred_file,
+    parse_metadata_table,
 )
 
 
@@ -100,6 +101,29 @@ def test_parse_iupred_file_supports_compact_local_format() -> None:
     }
 
 
+def test_parse_metadata_table_moves_gene_column_first_and_filters() -> None:
+    text = "\n".join(
+        [
+            "rank\t\tgene\tgene_name\tzscore",
+            "1\tDnvec_1\tP1\tAlpha\t12.5",
+            "2\tDnvec_2\tP2\tBeta\t8.0",
+        ]
+    )
+    table = parse_metadata_table(text, allowed_ids={"P2"})
+
+    assert [column["key"] for column in table["columns"][:3]] == ["gene", "rank", "column_2"]
+    assert table["idKey"] == "gene"
+    assert table["rows"] == [
+        {
+            "gene": "P2",
+            "rank": "2",
+            "column_2": "Dnvec_2",
+            "gene_name": "Beta",
+            "zscore": "8.0",
+        }
+    ]
+
+
 def test_load_dataset_bundle_loads_iupred_track(tmp_path) -> None:
     pep_path = tmp_path / "proteins.fasta"
     cds_path = tmp_path / "cds.fasta"
@@ -125,3 +149,49 @@ def test_load_dataset_bundle_loads_iupred_track(tmp_path) -> None:
     assert iupred["values"] == [0.10, 0.20, 0.30, 0.40]
     assert iupred["coverage"] == 1.0
     assert iupred["maxValue"] == 1.0
+
+
+def test_generate_main_picks_up_input_dir_metadata(tmp_path) -> None:
+    input_dir = tmp_path / "input"
+    output_dir = tmp_path / "output"
+    input_dir.mkdir()
+
+    protein_seq = "M" + ("A" * 29)
+    cds_seq = "ATG" + ("GCT" * 29)
+
+    (input_dir / "proteins.fasta").write_text(f">P1\n{protein_seq}\n", encoding="utf-8")
+    (input_dir / "cds.fasta").write_text(f">P1\n{cds_seq}\n", encoding="utf-8")
+    (input_dir / "domains.individual.bed").write_text(
+        "P1\t5\t20\tHomeobox\n",
+        encoding="utf-8",
+    )
+    (input_dir / "TF_list.csv").write_text(
+        "\n".join(
+            [
+                "rank\t\tgene\tgene_name\tzscore",
+                "1\tDnvec_1\tP1\tAlpha\t12.5",
+                "2\tDnvec_2\tP2\tBeta\t8.0",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    generate_main(["--input-dir", str(input_dir), "--output-dir", str(output_dir)])
+
+    payload = json.loads((output_dir / "dataset.json").read_text(encoding="utf-8"))
+    assert payload["metadataTable"]["idKey"] == "gene"
+    assert [column["key"] for column in payload["metadataTable"]["columns"][:3]] == [
+        "gene",
+        "rank",
+        "column_2",
+    ]
+    assert payload["metadataTable"]["rows"] == [
+        {
+            "gene": "P1",
+            "rank": "1",
+            "column_2": "Dnvec_1",
+            "gene_name": "Alpha",
+            "zscore": "12.5",
+        }
+    ]
