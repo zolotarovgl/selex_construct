@@ -1345,6 +1345,10 @@ def render_html(payload_json: str) -> str:
       font-weight: 700;
     }
 
+    .app-page-hidden {
+      display: none !important;
+    }
+
     .action-button {
       display: inline-flex;
       align-items: center;
@@ -1373,7 +1377,7 @@ def render_html(payload_json: str) -> str:
 
     .workspace {
       display: grid;
-      grid-template-columns: minmax(320px, 380px) minmax(0, 1fr);
+      grid-template-columns: minmax(240px, 290px) minmax(0, 1fr);
       gap: 8px;
     }
 
@@ -1444,16 +1448,16 @@ def render_html(payload_json: str) -> str:
     .review-row {
       display: flex;
       flex-direction: column;
-      gap: 6px;
+      gap: 5px;
       width: 100%;
-      padding: 8px 9px 9px;
+      padding: 7px 8px 8px;
       border: none;
       border-bottom: 1px solid var(--border-inner);
       border-left: 3px solid transparent;
       background: var(--panel);
       text-align: left;
       cursor: pointer;
-      min-height: 104px;
+      min-height: 72px;
     }
 
     .review-row:hover {
@@ -1462,6 +1466,8 @@ def render_html(payload_json: str) -> str:
 
     .review-row[data-range-status="Good"] { border-left-color: var(--good); }
     .review-row[data-range-status="Bad"] { border-left-color: var(--bad); }
+    .review-row[data-range-status="Mismatch"],
+    .review-row[data-range-status="Error"] { border-left-color: var(--bad); }
     .review-row[data-range-status="Shorter"],
     .review-row[data-range-status="UniprotBetter"] { border-left-color: var(--amber); }
 
@@ -1503,6 +1509,13 @@ def render_html(payload_json: str) -> str:
       display: flex;
       gap: 4px;
       flex-wrap: wrap;
+    }
+
+    .review-row-summary {
+      display: flex;
+      gap: 4px;
+      flex-wrap: wrap;
+      align-items: center;
     }
 
     .review-mini-pill {
@@ -1576,63 +1589,6 @@ def render_html(payload_json: str) -> str:
       font-size: 0;
     }
 
-    .review-evidence-grid {
-      display: grid;
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-      gap: 4px;
-    }
-
-    .review-evidence-chip {
-      display: flex;
-      flex-direction: column;
-      gap: 2px;
-      min-width: 0;
-      padding: 5px 6px;
-      border: 1px solid var(--border-light);
-      border-radius: 4px;
-      background: #fafafa;
-    }
-
-    .review-evidence-chip.dot-green {
-      background: rgba(39, 174, 96, 0.08);
-      border-color: rgba(39, 174, 96, 0.28);
-    }
-
-    .review-evidence-chip.dot-amber {
-      background: rgba(212, 148, 58, 0.10);
-      border-color: rgba(212, 148, 58, 0.30);
-    }
-
-    .review-evidence-chip.dot-red {
-      background: rgba(192, 57, 43, 0.08);
-      border-color: rgba(192, 57, 43, 0.22);
-    }
-
-    .review-evidence-chip.dot-gray {
-      background: #f3f3f3;
-      border-color: #dddddd;
-    }
-
-    .review-evidence-chip-label {
-      font-size: 8px;
-      line-height: 1.1;
-      font-weight: 800;
-      text-transform: uppercase;
-      letter-spacing: 0.03em;
-      color: #555;
-    }
-
-    .review-evidence-chip-value {
-      min-width: 0;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-      font-size: 10px;
-      line-height: 1.2;
-      color: #222;
-      font-weight: 600;
-    }
-
     .detail-column {
       padding: 10px;
       display: flex;
@@ -1643,16 +1599,62 @@ def render_html(payload_json: str) -> str:
 
     .detail-header {
       display: flex;
+      flex-direction: column;
+      gap: 6px;
+      padding-bottom: 2px;
+      border-bottom: 1px solid var(--border-light);
+    }
+
+    .detail-header-top {
+      display: flex;
       flex-wrap: wrap;
       gap: 6px;
       align-items: center;
-      padding-bottom: 2px;
-      border-bottom: 1px solid var(--border-light);
     }
 
     .detail-header-name {
       font-size: 14px;
       font-weight: 700;
+    }
+
+    .detail-evidence-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      align-items: center;
+    }
+
+    .detail-evidence-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      min-height: 20px;
+      padding: 0 7px;
+      border-radius: 999px;
+      border: 1px solid var(--border-light);
+      background: #f5f5f5;
+      font-size: 10px;
+      color: #333;
+      white-space: nowrap;
+    }
+
+    .detail-evidence-pill-label {
+      font-size: 9px;
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
+      color: #555;
+    }
+
+    .detail-evidence-pill-value {
+      font-weight: 600;
+      color: #222;
+    }
+
+    .pill-gray {
+      background: #f0f0f0;
+      color: #666;
+      border-color: #dbdbdb;
     }
 
     .metric-chip,
@@ -1799,6 +1801,8 @@ def render_html(payload_json: str) -> str:
       z-index: 1;
       padding: 0;
       background: #f1f3f5;
+      word-break: normal;
+      white-space: nowrap;
     }
 
     .metadata-th-btn {
@@ -1813,6 +1817,7 @@ def render_html(payload_json: str) -> str:
       text-align: left;
       padding: 8px;
       cursor: pointer;
+      white-space: nowrap;
     }
 
     .metadata-th-btn:hover {
@@ -1838,6 +1843,15 @@ def render_html(payload_json: str) -> str:
 
     .metadata-id-link:hover {
       color: #1b4f7a;
+    }
+
+    .ranges-summary-bar {
+      display: flex;
+      gap: 6px;
+      flex-wrap: wrap;
+      align-items: center;
+      padding: 8px 10px 0;
+      background: #fff;
     }
 
     .detail-section-header {
@@ -1881,6 +1895,59 @@ def render_html(payload_json: str) -> str:
       background: #fff;
     }
 
+    .detail-top-layout {
+      display: grid;
+      grid-template-columns: minmax(0, 1.35fr) minmax(320px, 0.9fr);
+      gap: 10px;
+      align-items: stretch;
+    }
+
+    .detail-top-column {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      min-width: 0;
+    }
+
+    .detail-top-column-right {
+      display: flex;
+      flex-direction: column;
+      min-width: 0;
+      min-height: 100%;
+      align-self: stretch;
+    }
+
+    .detail-top-column-right .detail-section {
+      height: 100%;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .detail-top-column-right .metadata-body {
+      flex: 1 1 auto;
+      min-height: 0;
+    }
+
+    .detail-top-column-right .structure-pane-wrap {
+      flex: 1 1 auto;
+      min-height: 0;
+    }
+
+    .detail-top-layout .detail-section {
+      margin: 0;
+    }
+
+    .structure-docked-host {
+      display: flex;
+      flex: 1 1 auto;
+      height: 100%;
+      min-height: 0;
+      background: #fff;
+      border: 1px solid var(--border-light);
+      border-radius: 3px;
+      overflow: hidden;
+    }
+
     .track-svg {
       display: block;
       width: 100%;
@@ -1897,14 +1964,7 @@ def render_html(payload_json: str) -> str:
     .track-drag-note {
       font-size: 11px;
       color: var(--muted);
-    }
-
-    .coordinates-extra-wrap {
-      padding: 0 10px 10px;
-      display: flex;
-      flex-direction: column;
-      gap: 8px;
-      background: #fff;
+      margin-top: 6px;
     }
 
     .coordinates-extra-toggle {
@@ -2355,6 +2415,12 @@ def render_html(payload_json: str) -> str:
       width: 100%;
     }
 
+    .structure-pane-wrap-docked {
+      flex: 1 1 auto;
+      min-height: 0;
+      height: 100%;
+    }
+
     .structure-panel {
       position: relative;
       display: flex;
@@ -2366,6 +2432,12 @@ def render_html(payload_json: str) -> str:
       box-shadow: var(--shadow);
       overflow: hidden;
       flex: 0 0 auto;
+    }
+
+    .structure-panel-docked {
+      flex: 1 1 auto;
+      height: 100%;
+      min-height: 0;
     }
 
     .structure-pane-meta {
@@ -2383,6 +2455,10 @@ def render_html(payload_json: str) -> str:
       min-height: 0;
       background: #fff;
       overflow: hidden;
+    }
+
+    .structure-pane-wrap-docked .structure-viewer {
+      min-height: 100%;
     }
 
     .structure-viewer canvas {
@@ -2501,6 +2577,10 @@ def render_html(payload_json: str) -> str:
         grid-template-columns: 1fr;
       }
 
+      .detail-top-layout {
+        grid-template-columns: 1fr;
+      }
+
       .controls-row {
         grid-template-columns: 1fr;
       }
@@ -2524,6 +2604,7 @@ def render_html(payload_json: str) -> str:
       <aside id="batch-panel" class="panel batch-panel"></aside>
       <section id="detail-panel" class="panel detail-column"></section>
     </div>
+    <section id="ranges-page" class="panel metadata-panel" hidden></section>
     <section id="metadata-page" class="panel metadata-panel" hidden></section>
   </main>
 
@@ -2578,7 +2659,9 @@ def render_html(payload_json: str) -> str:
       sort: "id",
       selectedId: initialEntry?.id ?? "",
       manualRanges: {},
-      showCoordinateDetails: false,
+      structureDockRight: false,
+      rangesSortKey: "id",
+      rangesSortDir: "asc",
       metadataSearch: "",
       metadataSortKey: metadataTable?.idKey ?? metadataTable?.columns?.[0]?.key ?? "",
       metadataSortDir: "asc",
@@ -2589,12 +2672,26 @@ def render_html(payload_json: str) -> str:
     const reviewPageEl = document.getElementById("review-page");
     const batchPanelEl = document.getElementById("batch-panel");
     const detailPanelEl = document.getElementById("detail-panel");
+    const rangesPageEl = document.getElementById("ranges-page");
     const metadataPageEl = document.getElementById("metadata-page");
 
-    let _structureCache = { entryId: null, viewer: null, containerEl: null };
+    let _structureCache = { entryId: null, viewer: null, containerEl: null, layoutMode: null };
+    let _structureInitToken = 0;
     let _analysesCache = { paramsKey: null, result: null };
     let _lastBatchKey = null;
     let _renderTimer = null;
+
+    function setPageVisibility() {
+      const showReview = state.view === "review";
+      const showRanges = state.view === "ranges";
+      const showMetadata = state.view === "metadata";
+      reviewPageEl.hidden = !showReview;
+      rangesPageEl.hidden = !showRanges;
+      metadataPageEl.hidden = !showMetadata;
+      reviewPageEl.classList.toggle("app-page-hidden", !showReview);
+      rangesPageEl.classList.toggle("app-page-hidden", !showRanges);
+      metadataPageEl.classList.toggle("app-page-hidden", !showMetadata);
+    }
 
     function debounceRender() {
       clearTimeout(_renderTimer);
@@ -2650,33 +2747,191 @@ def render_html(payload_json: str) -> str:
       return direction === "desc" ? -order : order;
     }
 
-    function renderTabs() {
-      if (!hasMetadata) {
-        tabsEl.innerHTML = "";
-        tabsEl.style.display = "none";
-        reviewPageEl.hidden = false;
-        metadataPageEl.hidden = true;
-        return;
+    function compareRangeTableRows(rowA, rowB, key, direction) {
+      function compareNumbers(left, right) {
+        if (left === "" && right !== "") return 1;
+        if (left !== "" && right === "") return -1;
+        if (left === "" && right === "") return 0;
+        return Number(left) - Number(right);
       }
 
+      let order = 0;
+      if (key === "aaRange") {
+        order = compareNumbers(rowA.aaStart, rowB.aaStart) || compareNumbers(rowA.aaEnd, rowB.aaEnd);
+      } else if (key === "customRange") {
+        order = compareNumbers(rowA.customStart, rowB.customStart) || compareNumbers(rowA.customEnd, rowB.customEnd);
+      } else if (key === "automaticRange") {
+        order = compareNumbers(rowA.automaticStart, rowB.automaticStart) || compareNumbers(rowA.automaticEnd, rowB.automaticEnd);
+      } else if (key === "cdsRange") {
+        order = compareNumbers(rowA.cdsStart, rowB.cdsStart) || compareNumbers(rowA.cdsEnd, rowB.cdsEnd);
+      } else if (["aaLength", "cdsLength", "aaStart", "aaEnd", "cdsStart", "cdsEnd"].includes(key)) {
+        order = compareNumbers(rowA[key] ?? "", rowB[key] ?? "");
+      } else {
+        order = compareMetadataRows(rowA, rowB, key, "asc");
+      }
+
+      if (order === 0 && key !== "id") {
+        order = String(rowA.id ?? "").localeCompare(String(rowB.id ?? ""), undefined, { numeric: true });
+      }
+      return direction === "desc" ? -order : order;
+    }
+
+    tabsEl.addEventListener("click", (event) => {
+      const button = event.target.closest("[data-app-view]");
+      if (!button) {
+        return;
+      }
+      const nextView = button.getAttribute("data-app-view") || "review";
+      if (state.view === nextView) {
+        return;
+      }
+      state.view = nextView;
+      render();
+    });
+
+    function renderTabs() {
       tabsEl.style.display = "flex";
       tabsEl.innerHTML = `
         <button type="button" class="app-tab ${state.view === "review" ? "app-tab-active" : ""}" data-app-view="review">
           Review
         </button>
-        <button type="button" class="app-tab ${state.view === "metadata" ? "app-tab-active" : ""}" data-app-view="metadata">
-          Metadata (${metadataTable.rows.length})
+        <button type="button" class="app-tab ${state.view === "ranges" ? "app-tab-active" : ""}" data-app-view="ranges">
+          Ranges (${dataset.length})
         </button>
+        ${
+          hasMetadata
+            ? `<button type="button" class="app-tab ${state.view === "metadata" ? "app-tab-active" : ""}" data-app-view="metadata">
+                 Metadata (${metadataTable.rows.length})
+               </button>`
+            : ""
+        }
       `;
-      tabsEl.querySelectorAll("[data-app-view]").forEach((button) => {
+      if (state.view === "metadata" && !hasMetadata) {
+        state.view = "review";
+      }
+      setPageVisibility();
+    }
+
+    function renderRangesTab(analyses) {
+      const rows = buildRangeSelectionRows(analyses);
+      const sortKey = state.rangesSortKey || "id";
+      const sortedRows = rows.slice().sort((a, b) => compareRangeTableRows(a, b, sortKey, state.rangesSortDir));
+      const exportHref = buildExportHref(buildRangesExportTsv(sortedRows));
+      const okCount = rows.filter((row) => row.constructStatus === "OK").length;
+      const manualCount = rows.filter((row) => row.source === "manual").length;
+      const customDiffCount = rows.filter((row) => row.customAuto === "different").length;
+      const rangeColumns = [
+        { key: "id", label: "ID", width: "28ch" },
+        { key: "source", label: "source", width: "10ch" },
+        { key: "aaRange", label: "selected range", width: "12ch" },
+        { key: "customRange", label: "custom range", width: "13ch" },
+        { key: "automaticRange", label: "automatic range", width: "13ch" },
+        { key: "customAuto", label: "compare", width: "10ch" },
+        { key: "aaLength", label: "AA len", width: "12ch" },
+        { key: "cdsRange", label: "CDS range", width: "12ch" },
+        { key: "cdsLength", label: "CDS len", width: "11ch" },
+        { key: "constructStatus", label: "construct", width: "12ch" },
+        { key: "automaticLabel", label: "auto ref", width: "13ch" },
+      ];
+
+      rangesPageEl.innerHTML = `
+        <div class="metadata-panel-header">
+          <h2>Selected Ranges</h2>
+          <p>Current per-protein selected ranges. Manual edits in the review pane are reflected here immediately.</p>
+        </div>
+        <div class="metadata-toolbar">
+          <span class="metadata-toolbar-note">${rows.length} proteins · ${okCount} export-ready · ${manualCount} manual · ${customDiffCount} custom/automatic differences</span>
+          <a class="action-button action-button-secondary" href="${exportHref}" download="selected_ranges.tsv">Export ranges TSV</a>
+        </div>
+        <div class="ranges-summary-bar">
+          <span class="metric-chip">rows: ${rows.length}</span>
+          <span class="metric-chip">export-ready: ${okCount}</span>
+          <span class="metric-chip">manual: ${manualCount}</span>
+          <span class="metric-chip ${customDiffCount ? "pill-amber" : "pill-green"}">custom != automatic: ${customDiffCount}</span>
+          <span class="metric-chip">sorted by: ${escapeHtml(sortKey)} ${state.rangesSortDir}</span>
+        </div>
+        <div class="metadata-table-wrap">
+          <table class="metadata-table">
+            <colgroup>
+              ${rangeColumns.map((column) => `<col style="width:${column.width}">`).join("")}
+            </colgroup>
+            <thead>
+              <tr>
+                ${rangeColumns.map((column) => {
+                  const isActive = state.rangesSortKey === column.key;
+                  const arrow = isActive ? (state.rangesSortDir === "asc" ? " ↑" : " ↓") : "";
+                  return `
+                    <th style="min-width:${column.width}">
+                      <button type="button" class="metadata-th-btn" data-range-sort="${escapeHtml(column.key)}">
+                        ${escapeHtml(column.label)}${arrow}
+                      </button>
+                    </th>
+                  `;
+                }).join("")}
+              </tr>
+            </thead>
+            <tbody>
+              ${sortedRows.map((row) => `
+                <tr>
+                  <td style="min-width:28ch"><button type="button" class="metadata-id-link" data-range-select-id="${escapeHtml(row.id)}">${escapeHtml(row.id)}</button></td>
+                  <td style="min-width:10ch">${
+                    row.source === "manual"
+                      ? '<span class="review-mini-pill pill-amber">manual</span>'
+                      : escapeHtml(row.source)
+                  }</td>
+                  <td style="min-width:12ch">${escapeHtml(row.aaRange)}</td>
+                  <td style="min-width:13ch">${row.customRange ? escapeHtml(row.customRange) : '<span class="status-na">NA</span>'}</td>
+                  <td style="min-width:13ch">${
+                    row.automaticRange
+                      ? escapeHtml(row.automaticRange)
+                      : '<span class="status-na">NA</span>'
+                  }</td>
+                  <td style="min-width:10ch">${
+                    row.customAuto === "different"
+                      ? `<span class="review-mini-pill pill-amber" title="${escapeHtml(`custom ${row.customRange} differs from automatic ${row.automaticRange}`)}">different</span>`
+                      : row.customAuto === "match"
+                        ? '<span class="review-mini-pill pill-green">match</span>'
+                        : '<span class="status-na">NA</span>'
+                  }</td>
+                  <td style="min-width:12ch">${escapeHtml(String(row.aaLength))}</td>
+                  <td style="min-width:12ch">${escapeHtml(row.cdsRange || "NA")}</td>
+                  <td style="min-width:11ch">${escapeHtml(String(row.cdsLength || "NA"))}</td>
+                  <td style="min-width:12ch"><span class="review-mini-pill ${row.constructStatus === "OK" ? "pill-green" : "pill-red"}">${escapeHtml(row.constructStatus)}</span></td>
+                  <td style="min-width:13ch">${escapeHtml(row.automaticLabel)}</td>
+                </tr>
+              `).join("")}
+            </tbody>
+          </table>
+        </div>
+      `;
+
+      rangesPageEl.querySelectorAll("[data-range-sort]").forEach((button) => {
         button.addEventListener("click", () => {
-          state.view = button.getAttribute("data-app-view") || "review";
+          const key = button.getAttribute("data-range-sort") || "";
+          if (!key) {
+            return;
+          }
+          if (state.rangesSortKey === key) {
+            state.rangesSortDir = state.rangesSortDir === "asc" ? "desc" : "asc";
+          } else {
+            state.rangesSortKey = key;
+            state.rangesSortDir = "asc";
+          }
           render();
         });
       });
 
-      reviewPageEl.hidden = state.view !== "review";
-      metadataPageEl.hidden = state.view !== "metadata";
+      rangesPageEl.querySelectorAll("[data-range-select-id]").forEach((button) => {
+        button.addEventListener("click", () => {
+          const targetId = button.getAttribute("data-range-select-id");
+          if (!targetId) {
+            return;
+          }
+          state.selectedId = targetId;
+          state.view = "review";
+          render();
+        });
+      });
     }
 
     function renderMetadataTab() {
@@ -2686,14 +2941,18 @@ def render_html(payload_json: str) -> str:
       }
 
       const columns = metadataTable.columns;
+      const columnSpecs = columns.map((column) => ({
+        ...column,
+        minWidthCh: Math.max(10, String(column.label || column.key || "").length + 2),
+      }));
       const searchNeedle = state.metadataSearch.trim().toLowerCase();
       const filteredRows = metadataTable.rows.filter((row) => {
         if (!searchNeedle) {
           return true;
         }
-        return columns.some((column) => String(row[column.key] ?? "").toLowerCase().includes(searchNeedle));
+        return columnSpecs.some((column) => String(row[column.key] ?? "").toLowerCase().includes(searchNeedle));
       });
-      const sortKey = state.metadataSortKey || metadataTable.idKey || columns[0].key;
+      const sortKey = state.metadataSortKey || metadataTable.idKey || columnSpecs[0].key;
       const sortedRows = filteredRows
         .slice()
         .sort((a, b) => compareMetadataRows(a, b, sortKey, state.metadataSortDir));
@@ -2718,13 +2977,16 @@ def render_html(payload_json: str) -> str:
           ${
             sortedRows.length
               ? `<table class="metadata-table">
+                  <colgroup>
+                    ${columnSpecs.map((column) => `<col style="width:${column.minWidthCh}ch">`).join("")}
+                  </colgroup>
                   <thead>
                     <tr>
-                      ${columns.map((column) => {
+                      ${columnSpecs.map((column) => {
                         const isActive = state.metadataSortKey === column.key;
                         const arrow = isActive ? (state.metadataSortDir === "asc" ? " ↑" : " ↓") : "";
                         return `
-                          <th>
+                          <th style="min-width:${column.minWidthCh}ch">
                             <button type="button" class="metadata-th-btn" data-metadata-sort="${escapeHtml(column.key)}">
                               ${escapeHtml(column.label)}${arrow}
                             </button>
@@ -2736,12 +2998,12 @@ def render_html(payload_json: str) -> str:
                   <tbody>
                     ${sortedRows.map((row) => `
                       <tr>
-                        ${columns.map((column) => {
+                        ${columnSpecs.map((column) => {
                           const value = String(row[column.key] ?? "");
                           if (column.key === metadataTable.idKey && dataset.some((entry) => entry.id === value)) {
-                            return `<td><button type="button" class="metadata-id-link" data-metadata-select-id="${escapeHtml(value)}">${escapeHtml(value)}</button></td>`;
+                            return `<td style="min-width:${column.minWidthCh}ch"><button type="button" class="metadata-id-link" data-metadata-select-id="${escapeHtml(value)}">${escapeHtml(value)}</button></td>`;
                           }
-                          return `<td>${escapeHtml(value)}</td>`;
+                          return `<td style="min-width:${column.minWidthCh}ch">${escapeHtml(value)}</td>`;
                         }).join("")}
                       </tr>
                     `).join("")}
@@ -3239,6 +3501,51 @@ def render_html(payload_json: str) -> str:
       return analysis.customRanges.length ? analysis.customRanges[0] : null;
     }
 
+    function automaticRange(analysis) {
+      return (
+        (analysis.suggestion.recommendedKey
+          ? analysis.suggestion.candidates[analysis.suggestion.recommendedKey]
+          : null) ?? analysis.referenceRange ?? null
+      );
+    }
+
+    function rangesEqual(left, right) {
+      return Boolean(left && right && left.start === right.start && left.end === right.end);
+    }
+
+    function customAutoDifference(analysis) {
+      const custom = primaryCustomRange(analysis);
+      const automatic = automaticRange(analysis);
+      if (!custom || !automatic) {
+        return null;
+      }
+      return {
+        custom,
+        automatic,
+        different: !rangesEqual(custom, automatic),
+        automaticLabel: analysis.suggestion.recommendedKey ?? analysis.entry.reference?.picked_range_name ?? "auto",
+      };
+    }
+
+    function analysisHasCdsProteinProblem(analysis) {
+      return (
+        analysis.validation.translationStatus !== "Match" ||
+        !["Match", "MatchSTOP"].includes(analysis.validation.lengthStatus)
+      );
+    }
+
+    function analysisReviewStatus(analysis) {
+      if (analysisHasCdsProteinProblem(analysis)) {
+        return "Mismatch";
+      }
+      return analysis.entry.reference?.status_range ?? "";
+    }
+
+    function analysisNeedsAttention(analysis) {
+      const reviewStatus = analysisReviewStatus(analysis);
+      return reviewStatus !== "Good";
+    }
+
     function defaultRangeSourceLabel(analysis) {
       if (primaryCustomRange(analysis)) {
         return "custom";
@@ -3248,10 +3555,7 @@ def render_html(payload_json: str) -> str:
 
     function getActiveRange(analysis) {
       const customRange = primaryCustomRange(analysis);
-      const recommendedRange =
-        (analysis.suggestion.recommendedKey
-          ? analysis.suggestion.candidates[analysis.suggestion.recommendedKey]
-          : null) ?? analysis.referenceRange;
+      const recommendedRange = automaticRange(analysis);
 
       return clampRange(
         state.manualRanges[analysis.entry.id] ??
@@ -3445,6 +3749,13 @@ def render_html(payload_json: str) -> str:
       return "";
     }
 
+    function badgeToneClass(dotClassName) {
+      if (dotClassName === "dot-green") return "pill-green";
+      if (dotClassName === "dot-red") return "pill-red";
+      if (dotClassName === "dot-amber") return "pill-amber";
+      return "pill-gray";
+    }
+
     function statusClass(status) {
       if (["OK", "Match", "MatchSTOP"].includes(status)) {
         return "status-ok";
@@ -3487,6 +3798,87 @@ def render_html(payload_json: str) -> str:
       return `data:text/plain;charset=utf-8,${encodeURIComponent(content)}`;
     }
 
+    function buildRangeSelectionRows(analyses) {
+      return analyses.map((analysis) => {
+        const activeRange = getActiveRange(analysis);
+        const construct = buildConstruct(analysis.entry, activeRange);
+        const custom = primaryCustomRange(analysis);
+        const automatic = automaticRange(analysis);
+        const customDiff = customAutoDifference(analysis);
+        const source = state.manualRanges[analysis.entry.id]
+          ? "manual"
+          : defaultRangeSourceLabel(analysis);
+        return {
+          id: analysis.entry.id,
+          source,
+          aaStart: activeRange.start,
+          aaEnd: activeRange.end,
+          aaRange: formatRange(activeRange),
+          aaLength: activeRange.end - activeRange.start + 1,
+          customStart: custom?.start ?? "",
+          customEnd: custom?.end ?? "",
+          cdsStart: construct.cdsRange?.start ?? "",
+          cdsEnd: construct.cdsRange?.end ?? "",
+          cdsRange: construct.cdsRange ? formatRange(construct.cdsRange) : "",
+          cdsLength: construct.cds.length || "",
+          constructStatus: construct.status,
+          cdsStatus: analysis.validation.lengthStatus,
+          translationStatus: analysis.validation.translationStatus,
+          automaticLabel: analysis.suggestion.recommendedKey ?? analysis.entry.reference?.picked_range_name ?? "auto",
+          automaticStart: automatic?.start ?? "",
+          automaticEnd: automatic?.end ?? "",
+          automaticRange: automatic ? formatRange(automatic) : "",
+          customRange: custom ? formatRange(custom) : "",
+          customAuto: customDiff ? (customDiff.different ? "different" : "match") : "",
+        };
+      });
+    }
+
+    function buildRangesExportTsv(rows) {
+      const headers = [
+        "id",
+        "source",
+        "aa_start",
+        "aa_end",
+        "aa_range",
+        "aa_length",
+        "cds_start",
+        "cds_end",
+        "cds_range",
+        "cds_length",
+        "construct_status",
+        "cds_status",
+        "translation_status",
+        "automatic_label",
+        "automatic_range",
+        "custom_range",
+        "custom_vs_automatic",
+      ];
+      const lines = [headers.join("\\t")];
+      rows.forEach((row) => {
+        lines.push([
+          row.id,
+          row.source,
+          row.aaStart,
+          row.aaEnd,
+          row.aaRange,
+          row.aaLength,
+          row.cdsStart,
+          row.cdsEnd,
+          row.cdsRange,
+          row.cdsLength,
+          row.constructStatus,
+          row.cdsStatus,
+          row.translationStatus,
+          row.automaticLabel,
+          row.automaticRange,
+          row.customRange,
+          row.customAuto,
+        ].join("\\t"));
+      });
+      return lines.join("\\n");
+    }
+
     const BROWSER_LABEL_W = 124;
     const BROWSER_SVG_W = 1040;
     const BROWSER_TRACK_W = BROWSER_SVG_W - BROWSER_LABEL_W;
@@ -3495,11 +3887,11 @@ def render_html(payload_json: str) -> str:
       const LABEL_W = BROWSER_LABEL_W;
       const SVG_W = BROWSER_SVG_W;
       const TRACK_W = BROWSER_TRACK_W;
-      const GAP = 3;
+      const GAP = 2;
       const mergedDomains = effectiveMergedDomains(entry);
       const hasIndividualDomains = entry.individualDomains.length > 0;
-      const individualLaneHeight = 11;
-      const individualLaneGap = 4;
+      const individualLaneHeight = 9;
+      const individualLaneGap = 2;
 
       function layoutIndividualDomains(domains) {
         const laneEnds = [];
@@ -3524,17 +3916,17 @@ def render_html(payload_json: str) -> str:
         : 0;
       const domainRowHeight = hasIndividualDomains
         ? (
-            8 + // top padding
-            8 + // individual row label
-            4 + // gap after individual label
+            6 + // top padding
+            7 + // individual row label
+            3 + // gap after individual label
             individualLaneCount * individualLaneHeight +
             Math.max(0, individualLaneCount - 1) * individualLaneGap +
-            6 // bottom padding
+            5 // bottom padding
           )
-        : 28;
-      const RANGES_LANE_H = 13;
-      const RANGES_GAP = 4;
-      const RANGES_PAD = 8;
+        : 24;
+      const RANGES_LANE_H = 11;
+      const RANGES_GAP = 3;
+      const RANGES_PAD = 6;
       const totalRangeLaneCount = Math.max(1, candidates.length + customRanges.length);
       const rangesRowHeight =
         RANGES_PAD +
@@ -3543,7 +3935,7 @@ def render_html(payload_json: str) -> str:
         RANGES_PAD;
 
       const rows = [
-        { label: "", height: 33, type: "ruler" },
+        { label: "", height: 27, type: "ruler" },
         { label: "Domains", height: domainRowHeight, type: "domains" },
         { label: "Ranges", height: rangesRowHeight, type: "ranges" }
       ];
@@ -3602,12 +3994,12 @@ def render_html(payload_json: str) -> str:
 
       const domainRowTop = trackTops[1];
       const rangesRowTop = trackTops[2];
-      const individualLabelY = domainRowTop + 14;
-      const individualTrackTop = domainRowTop + 20;
+      const individualLabelY = domainRowTop + 12;
+      const individualTrackTop = domainRowTop + 16;
       const individualBlockHeight =
         individualLaneCount * individualLaneHeight +
         Math.max(0, individualLaneCount - 1) * individualLaneGap;
-      const domainNoteY = domainRowTop + 18;
+      const domainNoteY = domainRowTop + 16;
 
       rows.forEach((row, index) => {
         const y = trackTops[index];
@@ -3740,15 +4132,15 @@ def render_html(payload_json: str) -> str:
       svg.push(
         `<line x1="${selectedStartX}" y1="0" x2="${selectedStartX}" y2="${totalHeight}" stroke="${selectedRangeColor}" stroke-width="3" />`,
         `<line x1="${selectedEndX}" y1="0" x2="${selectedEndX}" y2="${totalHeight}" stroke="${selectedRangeColor}" stroke-width="3" />`,
-        `<circle cx="${selectedStartX}" cy="10" r="4" fill="${selectedRangeColor}" />`,
-        `<circle cx="${selectedEndX}" cy="10" r="4" fill="${selectedRangeColor}" />`
+        `<circle cx="${selectedStartX}" cy="8" r="3.5" fill="${selectedRangeColor}" />`,
+        `<circle cx="${selectedEndX}" cy="8" r="3.5" fill="${selectedRangeColor}" />`
       );
 
       svg.push(
         `<line x1="${selectedStartX}" y1="0" x2="${selectedStartX}" y2="${totalHeight}"` +
-          ` stroke="transparent" stroke-width="18" data-drag-handle="start" />`,
+          ` stroke="transparent" stroke-width="14" data-drag-handle="start" />`,
         `<line x1="${selectedEndX}" y1="0" x2="${selectedEndX}" y2="${totalHeight}"` +
-          ` stroke="transparent" stroke-width="18" data-drag-handle="end" />`
+          ` stroke="transparent" stroke-width="14" data-drag-handle="end" />`
       );
 
       return `
@@ -3775,7 +4167,7 @@ def render_html(payload_json: str) -> str:
           label: "DSSP SS",
           coverage: entry.evidence.structureDssp.coverage,
           values: entry.evidence.structureDssp.values,
-          height: 24
+          height: 20
         });
       }
       if (entry.evidence.structureUniprot?.compatible) {
@@ -3784,7 +4176,7 @@ def render_html(payload_json: str) -> str:
           label: "UniProt SS",
           coverage: entry.evidence.structureUniprot.coverage,
           values: entry.evidence.structureUniprot.values,
-          height: 24
+          height: 20
         });
       }
       if (entry.evidence.conservationFull?.compatible) {
@@ -3794,7 +4186,7 @@ def render_html(payload_json: str) -> str:
           tooltip: "Full-length orthogroup conservation from a fresh full-protein realignment; higher values mean stronger conservation.",
           coverage: entry.evidence.conservationFull.coverage,
           values: entry.evidence.conservationFull.values,
-          height: 44,
+          height: 34,
           fill: "rgba(58,133,200,0.28)",
           stroke: "#2868a0"
         });
@@ -3805,7 +4197,7 @@ def render_html(payload_json: str) -> str:
           label: "Cons DBD",
           coverage: entry.evidence.conservation.coverage,
           values: entry.evidence.conservation.values,
-          height: 44,
+          height: 34,
           fill: "rgba(39,174,96,0.28)",
           stroke: "#1f7a45"
         });
@@ -3816,7 +4208,7 @@ def render_html(payload_json: str) -> str:
           label: "IUPred",
           coverage: entry.evidence.iupred.coverage,
           values: entry.evidence.iupred.values,
-          height: 44,
+          height: 34,
           fill: "rgba(110,110,110,0.20)",
           stroke: "#666666",
           maxValue: entry.evidence.iupred.maxValue ?? 1
@@ -3828,7 +4220,7 @@ def render_html(payload_json: str) -> str:
           label: "pLDDT",
           coverage: entry.evidence.plddt.coverage,
           values: entry.evidence.plddt.values,
-          height: 44,
+          height: 34,
           fill: "rgba(215,150,0,0.25)",
           stroke: "#c47d00",
           maxValue: entry.evidence.plddt.maxValue ?? 100
@@ -3855,7 +4247,7 @@ def render_html(payload_json: str) -> str:
         return LABEL_W + ((pos - 1) / (entry.proteinSequence.length - 1)) * TRACK_W;
       }
 
-      const rows = [{ type: "ruler", label: "", height: 26 }, ...availableTracks];
+      const rows = [{ type: "ruler", label: "", height: 22 }, ...availableTracks];
 
       const trackTops = [];
       let totalHeight = 0;
@@ -3891,7 +4283,7 @@ def render_html(payload_json: str) -> str:
               )
             : "",
           row.type !== "ruler"
-            ? `<text x="${LABEL_W - 6}" y="${y + row.height / 2 + 8}" text-anchor="end" font-size="8" fill="#777">${Math.round(row.coverage * 100)}%</text>`
+            ? `<text x="${LABEL_W - 6}" y="${y + row.height / 2 + 6}" text-anchor="end" font-size="8" fill="#777">${Math.round(row.coverage * 100)}%</text>`
             : "",
           index > 0 ? `<line x1="0" y1="${y}" x2="${SVG_W}" y2="${y}" stroke="#d5d5d5" stroke-width="1" />` : "",
           `<line x1="${LABEL_W}" y1="${y}" x2="${LABEL_W}" y2="${y + row.height}" stroke="#aaa" stroke-width="1" />`
@@ -3928,14 +4320,14 @@ def render_html(payload_json: str) -> str:
             const color = ssColors[run.value] ?? "#bbbbbb";
             const tooltip = `${track.label}: ${structureTypeName(run.value)} (${run.value}), aa ${run.start + 1}-${run.end + 1}`;
             svg.push(
-              `<rect x="${x}" y="${y + 4}" width="${width}" height="${track.height - 8}" fill="${color}" rx="1">` +
+              `<rect x="${x}" y="${y + 3}" width="${width}" height="${track.height - 6}" fill="${color}" rx="1">` +
                 `<title>${escapeHtml(tooltip)}</title>` +
               `</rect>`
             );
           });
         } else {
-          const trackTop = y + 4;
-          const trackHeight = track.height - 8;
+          const trackTop = y + 3;
+          const trackHeight = track.height - 6;
           const maxValue = track.maxValue != null
             ? track.maxValue
             : Math.max(
@@ -3996,7 +4388,7 @@ def render_html(payload_json: str) -> str:
       `;
     }
 
-    function renderStructurePanel(entry, activeRange) {
+    function renderStructurePanel(entry, activeRange, docked = false) {
       const model = entry.evidence.structureModel;
       if (!model?.text) {
         return "";
@@ -4004,29 +4396,33 @@ def render_html(payload_json: str) -> str:
       const selection = getStructureSelection(entry, activeRange);
 
       return `
-        <div class="structure-pane-wrap">
-          <div class="structure-pane-meta">
-            <span class="metric-chip">AA ${escapeHtml(formatRange(activeRange))}</span>
-            ${
-              selection.hasMapping && selection.proteinRange
-                ? `<span class="metric-chip">model aa ${escapeHtml(formatRange(selection.proteinRange))}</span>`
-                : `<span class="metric-chip">model mapping unavailable</span>`
-            }
-            ${
-              selection.mappingSource
-                ? `<span class="metric-chip">mapped by ${escapeHtml(selection.mappingSource)}</span>`
-                : ""
-            }
-            ${
-              selection.hasOverlap && selection.overlapRange
-                ? `<span class="metric-chip">shown ${escapeHtml(formatRange(selection.overlapRange))}</span>`
-                : selection.hasMapping
-                  ? `<span class="metric-chip">no overlap with selected range</span>`
-                  : ""
-            }
-            <span class="metric-chip">${escapeHtml(model.source)}</span>
-          </div>
-          <div class="structure-panel">
+        <div class="structure-pane-wrap ${docked ? "structure-pane-wrap-docked" : ""}">
+          ${
+            docked
+              ? ""
+              : `<div class="structure-pane-meta">
+                  <span class="metric-chip">AA ${escapeHtml(formatRange(activeRange))}</span>
+                  ${
+                    selection.hasMapping && selection.proteinRange
+                      ? `<span class="metric-chip">model aa ${escapeHtml(formatRange(selection.proteinRange))}</span>`
+                      : `<span class="metric-chip">model mapping unavailable</span>`
+                  }
+                  ${
+                    selection.mappingSource
+                      ? `<span class="metric-chip">mapped by ${escapeHtml(selection.mappingSource)}</span>`
+                      : ""
+                  }
+                  ${
+                    selection.hasOverlap && selection.overlapRange
+                      ? `<span class="metric-chip">shown ${escapeHtml(formatRange(selection.overlapRange))}</span>`
+                      : selection.hasMapping
+                        ? `<span class="metric-chip">no overlap with selected range</span>`
+                        : ""
+                  }
+                  <span class="metric-chip">${escapeHtml(model.source)}</span>
+                </div>`
+          }
+          <div class="structure-panel ${docked ? "structure-panel-docked" : ""}">
             <div
               id="structure-viewer-${sanitizeDomId(entry.id)}"
               class="structure-viewer"
@@ -4093,72 +4489,87 @@ def render_html(payload_json: str) -> str:
       }
     }
 
-    function initializeStructureViewer(entry, activeRange) {
-      const newSlot = detailPanelEl.querySelector("[data-structure-viewer]");
-      const model = entry.evidence.structureModel;
-      if (!newSlot || !model?.text) {
-        _structureCache = { entryId: null, viewer: null, containerEl: null };
-        return;
-      }
-
-      if (_structureCache.entryId === entry.id && _structureCache.viewer && _structureCache.containerEl) {
-        newSlot.replaceWith(_structureCache.containerEl);
-        _applyStructureColors(_structureCache.viewer, entry, activeRange, false);
-        _structureCache.viewer.resize();
-        _structureCache.viewer.render();
-        return;
-      }
-
-      _structureCache = { entryId: null, viewer: null, containerEl: null };
-
-      if (!window.$3Dmol || typeof window.$3Dmol.createViewer !== "function") {
-        newSlot.innerHTML = `
-          <div class="structure-fallback">
-            The 3D viewer library did not load. Open the report with internet access to fetch 3Dmol.js, or vendor the script locally for offline viewing.
-          </div>
-        `;
-        return;
-      }
-
-      try {
-        const viewer = window.$3Dmol.createViewer(newSlot, { backgroundColor: "white" });
-        viewer.addModel(model.text, model.format || "pdb");
-        _applyStructureColors(viewer, entry, activeRange, true);
+    function stabilizeStructureViewer(viewer) {
+      const refresh = () => {
         viewer.resize();
         viewer.render();
-        _structureCache = { entryId: entry.id, viewer, containerEl: newSlot };
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        newSlot.innerHTML = `
-          <div class="structure-fallback">
-            Failed to render the local PDB model: ${escapeHtml(message)}
-          </div>
-        `;
-      }
+      };
+      refresh();
+      window.requestAnimationFrame(() => {
+        refresh();
+        window.setTimeout(refresh, 40);
+      });
     }
 
-    function renderSequencePanel(entry, activeRange) {
-      const aaStart = activeRange.start - 1;
-      const aaEnd = activeRange.end;
-      const cdsStart = aaStart * 3;
-      const cdsEnd = aaEnd * 3;
+    function initializeStructureViewer(entry, activeRange, docked = false) {
+      const layoutMode = docked ? "docked" : "stacked";
+      const initToken = ++_structureInitToken;
 
-      const aaBefore = escapeHtml(entry.proteinSequence.slice(0, aaStart));
-      const aaSelected = escapeHtml(entry.proteinSequence.slice(aaStart, aaEnd));
-      const aaAfter = escapeHtml(entry.proteinSequence.slice(aaEnd));
+      function tryMount(attempt = 0) {
+        if (initToken !== _structureInitToken) {
+          return;
+        }
 
-      const cdsBefore = escapeHtml(entry.cdsSequence.slice(0, cdsStart));
-      const cdsSelected = escapeHtml(entry.cdsSequence.slice(cdsStart, cdsEnd));
-      const cdsAfter = escapeHtml(entry.cdsSequence.slice(cdsEnd));
+        const newSlot = detailPanelEl.querySelector("[data-structure-viewer]");
+        const model = entry.evidence.structureModel;
+        if (!newSlot || !model?.text) {
+          _structureCache = { entryId: null, viewer: null, containerEl: null, layoutMode: null };
+          return;
+        }
 
-      return `
-        <div class="seq-panel">
-          <div class="seq-track-label">AA · ${activeRange.start}-${activeRange.end} (${aaSelected.length} aa)</div>
-          <pre class="seq-pre"><span class="seq-ctx">${aaBefore}</span><mark class="seq-mark">${aaSelected}</mark><span class="seq-ctx">${aaAfter}</span></pre>
-          <div class="seq-track-label">CDS · ${cdsStart + 1}-${cdsEnd} (${cdsSelected.length} nt)</div>
-          <pre class="seq-pre"><span class="seq-ctx">${cdsBefore}</span><mark class="seq-mark">${cdsSelected}</mark><span class="seq-ctx">${cdsAfter}</span></pre>
-        </div>
-      `;
+        const rect = newSlot.getBoundingClientRect();
+        const hasRealViewport = rect.width >= 80 && rect.height >= 120;
+        if (!hasRealViewport && attempt < 8) {
+          window.setTimeout(() => tryMount(attempt + 1), 30);
+          return;
+        }
+
+        if (
+          _structureCache.entryId === entry.id &&
+          _structureCache.layoutMode === layoutMode &&
+          _structureCache.viewer &&
+          _structureCache.containerEl
+        ) {
+          newSlot.replaceWith(_structureCache.containerEl);
+          _applyStructureColors(_structureCache.viewer, entry, activeRange, false);
+          stabilizeStructureViewer(_structureCache.viewer);
+          return;
+        }
+
+        _structureCache = { entryId: null, viewer: null, containerEl: null, layoutMode: null };
+
+        if (!window.$3Dmol || typeof window.$3Dmol.createViewer !== "function") {
+          newSlot.innerHTML = `
+            <div class="structure-fallback">
+              The 3D viewer library did not load. Open the report with internet access to fetch 3Dmol.js, or vendor the script locally for offline viewing.
+            </div>
+          `;
+          return;
+        }
+
+        try {
+          const viewer = window.$3Dmol.createViewer(newSlot, { backgroundColor: "white" });
+          viewer.addModel(model.text, model.format || "pdb");
+          _applyStructureColors(viewer, entry, activeRange, true);
+          stabilizeStructureViewer(viewer);
+          window.setTimeout(() => {
+            if (initToken !== _structureInitToken) {
+              return;
+            }
+            stabilizeStructureViewer(viewer);
+          }, 30);
+          _structureCache = { entryId: entry.id, viewer, containerEl: newSlot, layoutMode };
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          newSlot.innerHTML = `
+            <div class="structure-fallback">
+              Failed to render the local PDB model: ${escapeHtml(message)}
+            </div>
+          `;
+        }
+      }
+
+      window.setTimeout(() => tryMount(), 0);
     }
 
     function hasCdsIssue(analysis, construct) {
@@ -4399,7 +4810,7 @@ def render_html(payload_json: str) -> str:
       batchPanelEl.innerHTML = `
         <div class="batch-panel-header">
           <h2>Proteins (${visibleAnalyses.length})</h2>
-          <p>Each row shows domain context plus the evidence available for that protein.</p>
+          <p>Compact navigator for selecting a protein to inspect in detail.</p>
         </div>
         <div class="batch-toolbar">
           <input id="search-input" value="${escapeHtml(state.search)}" placeholder="Search sequence ID or domain…" aria-label="Search">
@@ -4417,13 +4828,6 @@ def render_html(payload_json: str) -> str:
             <option value="plddt"${state.sort === "plddt" ? " selected" : ""}>Sort: pLDDT</option>
           </select>
         </div>
-        <div class="batch-legend">
-          <span class="batch-legend-note">Tile colors:</span>
-          <span class="batch-legend-item"><span class="status-dot dot-green"></span>available</span>
-          <span class="batch-legend-item"><span class="status-dot dot-amber"></span>partial</span>
-          <span class="batch-legend-item"><span class="status-dot dot-red"></span>mismatch</span>
-          <span class="batch-legend-item"><span class="status-dot dot-gray"></span>absent</span>
-        </div>
         <div class="review-list">
           ${
             visibleAnalyses.length
@@ -4432,6 +4836,9 @@ def render_html(payload_json: str) -> str:
                     const active = analysis.entry.id === selectedId;
                     const activeRange = getActiveRange(analysis);
                     const evidenceCardsForRow = evidenceCards(analysis.entry, analysis.validation);
+                    const customDiff = customAutoDifference(analysis);
+                    const availableEvidenceCount = evidenceCardsForRow.filter((card) => card.cls !== "dot-gray").length;
+                    const issueCount = evidenceCardsForRow.filter((card) => card.cls === "dot-red").length;
                     const domainSummary =
                       analysis.entry.individualDomains.map((d) => d.label).join(", ") ||
                       analysis.entry.mergedDomains.map((d) => d.label).join(", ") ||
@@ -4439,8 +4846,9 @@ def render_html(payload_json: str) -> str:
                     const rangeSource = state.manualRanges[analysis.entry.id]
                       ? "manual"
                       : defaultRangeSourceLabel(analysis);
-                    const rangeStatus = analysis.entry.reference?.status_range ?? "";
+                    const rangeStatus = analysisReviewStatus(analysis);
                     const structureStatus = analysis.entry.reference?.status_structure ?? "";
+                    const cdsProblem = analysisHasCdsProteinProblem(analysis);
 
                     return `
                       <button type="button" class="review-row ${active ? "review-row-active" : ""}" data-select-id="${escapeHtml(analysis.entry.id)}" data-range-status="${escapeHtml(rangeStatus)}">
@@ -4451,18 +4859,20 @@ def render_html(payload_json: str) -> str:
                               <span class="review-mini-pill">${analysis.entry.proteinSequence.length} aa</span>
                               <span class="review-mini-pill ${state.manualRanges[analysis.entry.id] ? "pill-blue" : ""}">${escapeHtml(rangeSource)}: ${escapeHtml(formatRange(activeRange))}</span>
                               ${rangeStatus ? `<span class="review-mini-pill ${dotToTone(rangeStatus)}">range: ${escapeHtml(rangeStatus)}</span>` : ""}
-                              ${structureStatus ? `<span class="review-mini-pill ${dotToTone(structureStatus)}">structure: ${escapeHtml(structureStatus)}</span>` : ""}
                             </div>
                           </div>
                         </div>
                         <div class="review-row-id">${escapeHtml(domainSummary)}</div>
-                        <div class="review-evidence-grid">
-                          ${evidenceCardsForRow.map((card) => `
-                            <div class="review-evidence-chip ${card.cls}" title="${escapeHtml(card.title)}">
-                              <span class="review-evidence-chip-label">${escapeHtml(card.label)}</span>
-                              <span class="review-evidence-chip-value">${escapeHtml(card.value)}</span>
-                            </div>
-                          `).join("")}
+                        <div class="review-row-summary">
+                          <span class="review-mini-pill">evidence: ${availableEvidenceCount}/${evidenceCardsForRow.length}</span>
+                          ${cdsProblem ? `<span class="review-mini-pill pill-red">CDS mismatch</span>` : ""}
+                          ${
+                            customDiff?.different
+                              ? `<span class="review-mini-pill pill-amber" title="${escapeHtml(`custom ${formatRange(customDiff.custom)} differs from automatic ${customDiff.automaticLabel} ${formatRange(customDiff.automatic)}`)}">custom != ${escapeHtml(customDiff.automaticLabel)}</span>`
+                              : ""
+                          }
+                          ${issueCount ? `<span class="review-mini-pill pill-red">${issueCount} issue${issueCount === 1 ? "" : "s"}</span>` : ""}
+                          ${structureStatus ? `<span class="review-mini-pill ${dotToTone(structureStatus)}">structure: ${escapeHtml(structureStatus)}</span>` : ""}
                         </div>
                       </button>
                     `;
@@ -4512,151 +4922,109 @@ def render_html(payload_json: str) -> str:
           : "";
       const aaLen = activeRange.end - activeRange.start + 1;
       const cdsLen = construct.cds.length;
+      const detailEvidenceCards = evidenceCards(entry, analysis.validation);
       const hasStructureModel = Boolean(entry.evidence.structureModel?.text);
       const showCdsIssuePanel = hasCdsIssue(analysis, construct);
+      const structureToggleLabel = state.structureDockRight ? "3D below" : "3D right";
       let sectionIndex = 1;
       const coordinatesSectionIndex = sectionIndex++;
       const evidenceSectionIndex = sectionIndex++;
       const structureSectionIndex = hasStructureModel ? sectionIndex++ : null;
       const cdsIssueSectionIndex = showCdsIssuePanel ? sectionIndex++ : null;
       const constructSummarySectionIndex = sectionIndex++;
-      const coordinateDetailsLabel = state.showCoordinateDetails ? "hide lower details" : "show lower details";
-      detailPanelEl.innerHTML = `
-        <div class="detail-header">
-          <span class="detail-header-name">${escapeHtml(entry.id)}</span>
-          <span class="metric-chip">length: ${entry.proteinSequence.length} aa</span>
-          <span class="metric-chip ${dotToTone(analysis.validation.lengthStatus)}">CDS: ${escapeHtml(analysis.validation.lengthStatus)}</span>
-          <span class="metric-chip">range: ${escapeHtml(formatRange(activeRange))}</span>
-          ${(() => {
-            const v = analysis.validation;
-            if (v.translationStatus === "Match") {
-              return `<span class="metric-chip ${dotToTone("Match")}">translation: Match</span>`;
-            }
-            const deltaPart = v.lengthDelta !== 0 ? ` (CDS transl. ${v.cdsPeptideLength} aa, delta ${v.lengthDelta > 0 ? "+" : ""}${v.lengthDelta})` : "";
-            const mismatchPart = v.firstMismatchAa !== null ? `, first mismatch aa ${v.firstMismatchAa}` : "";
-            return `<span class="metric-chip ${dotToTone("Mismatch")}" title="${escapeHtml("Translation Mismatch" + deltaPart + mismatchPart)}">translation: Mismatch${mismatchPart}</span>`;
-          })()}
-        </div>
-
+      const coordinatesSectionMarkup = `
         <details class="detail-section" open>
           <summary class="detail-section-header detail-section-summary">
             <div>
               <div class="detail-section-index">${coordinatesSectionIndex}. Coordinates and Sequence</div>
-              <div class="detail-section-copy">Protein coordinates with optional range controls and AA/CDS highlights below.</div>
+              <div class="detail-section-copy">Protein coordinates with direct range editing controls.</div>
             </div>
             <div class="section-chip-row">
               <span class="metric-chip">selected: ${escapeHtml(formatRange(activeRange))}</span>
               <span class="metric-chip">${aaLen} aa</span>
               <span class="metric-chip">${cdsLen} nt</span>
-              <button type="button" class="coordinates-extra-toggle" data-toggle-coordinate-details>${coordinateDetailsLabel}</button>
+              ${
+                hasStructureModel
+                  ? `<button type="button" class="coordinates-extra-toggle" data-toggle-structure-dock>${structureToggleLabel}</button>`
+                  : ""
+              }
               <span class="metric-chip">expand / collapse</span>
             </div>
           </summary>
 
           <div class="track-viewer-wrap">
             ${renderTrackViewer(entry, candidateRanges, activeRange, analysis.customRanges)}
+            <div class="track-drag-note">Drag the black range boundaries directly on the coordinate plot.</div>
           </div>
-          ${
-            state.showCoordinateDetails
-              ? `
-                <div class="coordinates-extra-wrap">
-                  <div class="track-legend">
-                    <span class="track-legend-item"><span class="track-legend-swatch track-legend-r1"></span>r1 merged domain span</span>
-                    <span class="track-legend-item"><span class="track-legend-swatch track-legend-r2"></span>r2 r1 plus slop</span>
-                    <span class="track-legend-item"><span class="track-legend-swatch track-legend-r3"></span>r3 extra beyond r2</span>
-                    ${
-                      analysis.customRanges.length
-                        ? `<span class="track-legend-item"><span class="track-legend-swatch track-legend-custom"></span>custom range overlay</span>`
-                        : ""
-                    }
-                  </div>
-                  <details class="track-explainer">
-                    <summary>What are r1 / r2 / r3?</summary>
-                    <div class="track-explainer-body">
-                      <p><strong>r1</strong> is built by merging all available domain hits for the protein into one continuous span.</p>
-                      <p><strong>r2</strong> is that <strong>r1</strong> span expanded by ±${state.params.slop} aa.</p>
-                      <p><strong>r3</strong> starts from <strong>r2</strong> and expands further when a compatible structure track has structured runs of at least ${state.params.minStructuredRun} aa within ${state.params.offset} aa of either edge.</p>
-                      <p>If the resulting start or end lands within ${state.params.nTerminalSnapThreshold} aa of a protein terminus, the range snaps to that terminus.</p>
-                      <p>If gray custom ranges are available, the selected range starts from the first custom range by default, and you can then edit it directly.</p>
-                      <p>So in practice, <strong>r3</strong> is the structure-aware version of <strong>r2</strong>, meant to avoid cutting too close to nearby structured elements while still extending cleanly to a nearby terminus.</p>
-                    </div>
-                  </details>
-                  <div class="track-drag-note">Drag the black range boundaries directly on the coordinate plot.</div>
-                  ${renderSequencePanel(entry, activeRange)}
-                  <div class="controls-row">
-                    <div>
-                      <div class="controls-section-label">Suggested ranges</div>
-                      <div class="candidate-buttons">
-                        ${
-                          candidateRanges.length
-                            ? candidateRanges
-                                .map((candidate) => {
-                                  const isActive =
-                                    candidate.start === activeRange.start && candidate.end === activeRange.end;
-                                  return `
-                                    <button
-                                      type="button"
-                                      class="candidate-btn ${isActive ? "candidate-btn-active" : ""}"
-                                      data-candidate-range="${candidate.key}"
-                                      title="${escapeHtml(candidate.description)}"
-                                    >
-                                      <span class="candidate-btn-dot" style="background: ${candidateColors[candidate.key] ?? "#888"}"></span>
-                                      ${escapeHtml(candidate.label)} ${candidate.start}-${candidate.end}
-                                    </button>
-                                  `;
-                                })
-                                .join("")
-                            : `<span class="metric-chip">No candidate ranges available</span>`
-                        }
-                      </div>
-                      <div class="params-panel">
-                        <div class="controls-section-label">Suggestion parameters</div>
-                        <div class="params-grid">
-                          <div class="params-field">
-                            <label>Slop
-                              <input type="number" data-param-key="slop" value="${state.params.slop}">
-                            </label>
-                          </div>
-                          <div class="params-field">
-                            <label>Offset
-                              <input type="number" data-param-key="offset" value="${state.params.offset}">
-                            </label>
-                          </div>
-                          <div class="params-field">
-                            <label>Min struct run
-                              <input type="number" data-param-key="minStructuredRun" value="${state.params.minStructuredRun}">
-                            </label>
-                          </div>
-                          <div class="params-field">
-                            <label>Terminal snap
-                              <input type="number" data-param-key="nTerminalSnapThreshold" value="${state.params.nTerminalSnapThreshold}">
-                            </label>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
+          <div class="controls-row">
+            <div>
+              <div class="controls-section-label">Suggested ranges</div>
+              <div class="candidate-buttons">
+                ${
+                  candidateRanges.length
+                    ? candidateRanges
+                        .map((candidate) => {
+                          const isActive =
+                            candidate.start === activeRange.start && candidate.end === activeRange.end;
+                          return `
+                            <button
+                              type="button"
+                              class="candidate-btn ${isActive ? "candidate-btn-active" : ""}"
+                              data-candidate-range="${candidate.key}"
+                              title="${escapeHtml(candidate.description)}"
+                            >
+                              <span class="candidate-btn-dot" style="background: ${candidateColors[candidate.key] ?? "#888"}"></span>
+                              ${escapeHtml(candidate.label)} ${candidate.start}-${candidate.end}
+                            </button>
+                          `;
+                        })
+                        .join("")
+                    : `<span class="metric-chip">No candidate ranges available</span>`
+                }
+              </div>
+            </div>
 
-                    <div>
-                      <div class="controls-section-label">Manual range</div>
-                      <div class="manual-range-row">
-                        <label>Start
-                          <input type="number" id="range-start-input" min="1" max="${entry.proteinSequence.length}" value="${activeRange.start}">
-                        </label>
-                        <label>End
-                          <input type="number" id="range-end-input" min="${activeRange.start}" max="${entry.proteinSequence.length}" value="${activeRange.end}">
-                        </label>
-                      </div>
-                      <div class="range-status-line">
-                        construct status: <span class="${statusClass(construct.status)}">${escapeHtml(construct.status)}</span>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              `
-              : ""
-          }
+            <div>
+              <div class="controls-section-label">Manual range</div>
+              <div class="manual-range-row">
+                <label>Start
+                  <input type="number" id="range-start-input" min="1" max="${entry.proteinSequence.length}" value="${activeRange.start}">
+                </label>
+                <label>End
+                  <input type="number" id="range-end-input" min="${activeRange.start}" max="${entry.proteinSequence.length}" value="${activeRange.end}">
+                </label>
+              </div>
+              <div class="range-status-line">
+                construct status: <span class="${statusClass(construct.status)}">${escapeHtml(construct.status)}</span>
+              </div>
+            </div>
+          </div>
         </details>
-
+      `;
+      const structureDockedMarkup = hasStructureModel
+        ? `
+          <div class="structure-docked-host">
+            ${renderStructurePanel(entry, activeRange, true)}
+          </div>
+        `
+        : "";
+      const structureSectionMarkup = hasStructureModel
+        ? `
+          <details class="detail-section" open>
+            <summary class="detail-section-header detail-section-summary">
+              <div>
+                <div class="detail-section-index">${structureSectionIndex}. Structure</div>
+                <div class="detail-section-copy">Local protein structure with selected residues colored by their fixed N-to-C position in the full model, from N-terminal red through a C-terminal rainbow.</div>
+              </div>
+              <div class="metric-chip">expand / collapse</div>
+            </summary>
+            <div class="metadata-body">
+              ${renderStructurePanel(entry, activeRange, state.structureDockRight)}
+            </div>
+          </details>
+        `
+        : "";
+      const evidenceSectionMarkup = `
         <details class="detail-section" open>
           <summary class="detail-section-header detail-section-summary">
             <div>
@@ -4684,23 +5052,51 @@ def render_html(payload_json: str) -> str:
             }
           </div>
         </details>
+      `;
+      detailPanelEl.innerHTML = `
+        <div class="detail-header">
+          <div class="detail-header-top">
+            <span class="detail-header-name">${escapeHtml(entry.id)}</span>
+            <span class="metric-chip">length: ${entry.proteinSequence.length} aa</span>
+            <span class="metric-chip ${dotToTone(analysis.validation.lengthStatus)}">CDS: ${escapeHtml(analysis.validation.lengthStatus)}</span>
+            <span class="metric-chip">range: ${escapeHtml(formatRange(activeRange))}</span>
+            ${(() => {
+              const v = analysis.validation;
+              if (v.translationStatus === "Match") {
+                return `<span class="metric-chip ${dotToTone("Match")}">translation: Match</span>`;
+              }
+              const deltaPart = v.lengthDelta !== 0 ? ` (CDS transl. ${v.cdsPeptideLength} aa, delta ${v.lengthDelta > 0 ? "+" : ""}${v.lengthDelta})` : "";
+              const mismatchPart = v.firstMismatchAa !== null ? `, first mismatch aa ${v.firstMismatchAa}` : "";
+              return `<span class="metric-chip ${dotToTone("Mismatch")}" title="${escapeHtml("Translation Mismatch" + deltaPart + mismatchPart)}">translation: Mismatch${mismatchPart}</span>`;
+            })()}
+          </div>
+          <div class="detail-evidence-row">
+            ${detailEvidenceCards.map((card) => `
+              <span class="detail-evidence-pill ${badgeToneClass(card.cls)}" title="${escapeHtml(card.title)}">
+                <span class="detail-evidence-pill-label">${escapeHtml(card.label)}</span>
+                <span class="detail-evidence-pill-value">${escapeHtml(card.value)}</span>
+              </span>
+            `).join("")}
+          </div>
+        </div>
 
         ${
-          hasStructureModel
-            ? `
-              <details class="detail-section" open>
-                <summary class="detail-section-header detail-section-summary">
-                  <div>
-                    <div class="detail-section-index">${structureSectionIndex}. Structure</div>
-                    <div class="detail-section-copy">Local protein structure with selected residues colored by their fixed N-to-C position in the full model, from N-terminal red through a C-terminal rainbow.</div>
-                  </div>
-                  <div class="metric-chip">expand / collapse</div>
-                </summary>
-                <div class="metadata-body">
-                  ${renderStructurePanel(entry, activeRange)}
-                </div>
-              </details>
-            `
+          hasStructureModel && state.structureDockRight
+            ? `<div class="detail-top-layout">
+                 <div class="detail-top-column">
+                   ${coordinatesSectionMarkup}
+                   ${evidenceSectionMarkup}
+                 </div>
+                 <div class="detail-top-column detail-top-column-right">${structureDockedMarkup}</div>
+               </div>`
+            : coordinatesSectionMarkup
+        }
+
+        ${hasStructureModel && state.structureDockRight ? "" : evidenceSectionMarkup}
+
+        ${
+          hasStructureModel && !state.structureDockRight
+            ? structureSectionMarkup
             : ""
         }
 
@@ -4810,10 +5206,10 @@ def render_html(payload_json: str) -> str:
         });
       });
 
-      detailPanelEl.querySelector("[data-toggle-coordinate-details]")?.addEventListener("click", (event) => {
+      detailPanelEl.querySelector("[data-toggle-structure-dock]")?.addEventListener("click", (event) => {
         event.preventDefault();
         event.stopPropagation();
-        state.showCoordinateDetails = !state.showCoordinateDetails;
+        state.structureDockRight = !state.structureDockRight;
         render();
       });
 
@@ -4904,16 +5300,7 @@ def render_html(payload_json: str) -> str:
         debounceRender();
       });
 
-      detailPanelEl.querySelectorAll("[data-param-key]").forEach((input) => {
-        input.addEventListener("input", (event) => {
-          const key = input.getAttribute("data-param-key");
-          const value = Math.max(1, Number(event.target.value) || 1);
-          state.params[key] = value;
-          debounceRender();
-        });
-      });
-
-      initializeStructureViewer(entry, activeRange);
+      initializeStructureViewer(entry, activeRange, state.structureDockRight);
       bindTrackDragging();
     }
 
@@ -4928,13 +5315,12 @@ def render_html(payload_json: str) -> str:
           .join(" ")
           .toLowerCase();
         const matchesSearch = haystack.includes(state.search.toLowerCase());
-        const reference = analysis.entry.reference;
         const matchesFilter =
           state.filter === "all"
             ? true
             : state.filter === "good"
-              ? reference?.status_range === "Good"
-              : reference?.status_range !== "Good";
+              ? !analysisNeedsAttention(analysis)
+              : analysisNeedsAttention(analysis);
         return matchesSearch && matchesFilter;
       });
 
@@ -4966,6 +5352,8 @@ def render_html(payload_json: str) -> str:
           _lastBatchKey = batchKey;
         }
         renderDetail(selectedAnalysis);
+      } else if (state.view === "ranges") {
+        renderRangesTab(analyses);
       } else {
         renderMetadataTab();
       }
