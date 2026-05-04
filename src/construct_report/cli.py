@@ -1024,7 +1024,15 @@ def resolve_cli_inputs(
                     else (
                         (input_dir / "TF_list.csv")
                         if (input_dir / "TF_list.csv").exists()
-                        else ((project_root / "TF_list.csv") if (project_root / "TF_list.csv").exists() else None)
+                        else (
+                            (project_root / "metadata.tsv")
+                            if (project_root / "metadata.tsv").exists()
+                            else (
+                                (project_root / "metadata.csv")
+                                if (project_root / "metadata.csv").exists()
+                                else ((project_root / "TF_list.csv") if (project_root / "TF_list.csv").exists() else None)
+                            )
+                        )
                     )
                 )
             )
@@ -3227,7 +3235,19 @@ def render_html(payload_json: str) -> str:
       return result;
     }
 
+    function primaryCustomRange(analysis) {
+      return analysis.customRanges.length ? analysis.customRanges[0] : null;
+    }
+
+    function defaultRangeSourceLabel(analysis) {
+      if (primaryCustomRange(analysis)) {
+        return "custom";
+      }
+      return analysis.suggestion.recommendedKey ?? analysis.entry.reference?.picked_range_name ?? "range";
+    }
+
     function getActiveRange(analysis) {
+      const customRange = primaryCustomRange(analysis);
       const recommendedRange =
         (analysis.suggestion.recommendedKey
           ? analysis.suggestion.candidates[analysis.suggestion.recommendedKey]
@@ -3235,6 +3255,7 @@ def render_html(payload_json: str) -> str:
 
       return clampRange(
         state.manualRanges[analysis.entry.id] ??
+          customRange ??
           recommendedRange ?? {
             start: 1,
             end: Math.min(50, analysis.entry.proteinSequence.length)
@@ -4341,7 +4362,9 @@ def render_html(payload_json: str) -> str:
             return [];
           }
 
-          const rangeLabel = state.manualRanges[analysis.entry.id] ? "manual" : (analysis.suggestion.recommendedKey ?? "range");
+          const rangeLabel = state.manualRanges[analysis.entry.id]
+            ? "manual"
+            : defaultRangeSourceLabel(analysis);
           return [
             `>${analysis.entry.id}|${rangeLabel}|aa=${formatRange(activeRange)}\\n${itemConstruct.cds}`
           ];
@@ -4415,7 +4438,7 @@ def render_html(payload_json: str) -> str:
                       "no domains";
                     const rangeSource = state.manualRanges[analysis.entry.id]
                       ? "manual"
-                      : (analysis.suggestion.recommendedKey ?? analysis.entry.reference?.picked_range_name ?? "range");
+                      : defaultRangeSourceLabel(analysis);
                     const rangeStatus = analysis.entry.reference?.status_range ?? "";
                     const structureStatus = analysis.entry.reference?.status_structure ?? "";
 
@@ -4554,6 +4577,7 @@ def render_html(payload_json: str) -> str:
                       <p><strong>r2</strong> is that <strong>r1</strong> span expanded by ±${state.params.slop} aa.</p>
                       <p><strong>r3</strong> starts from <strong>r2</strong> and expands further when a compatible structure track has structured runs of at least ${state.params.minStructuredRun} aa within ${state.params.offset} aa of either edge.</p>
                       <p>If the resulting start or end lands within ${state.params.nTerminalSnapThreshold} aa of a protein terminus, the range snaps to that terminus.</p>
+                      <p>If gray custom ranges are available, the selected range starts from the first custom range by default, and you can then edit it directly.</p>
                       <p>So in practice, <strong>r3</strong> is the structure-aware version of <strong>r2</strong>, meant to avoid cutting too close to nearby structured elements while still extending cleanly to a nearby terminus.</p>
                     </div>
                   </details>
@@ -4778,7 +4802,10 @@ def render_html(payload_json: str) -> str:
           if (!candidate) {
             return;
           }
-          state.manualRanges[entry.id] = { start: candidate.start, end: candidate.end };
+          state.manualRanges[entry.id] = clampRange({
+            start: candidate.start,
+            end: candidate.end
+          }, entry.proteinSequence.length);
           render();
         });
       });
@@ -4835,9 +4862,15 @@ def render_html(payload_json: str) -> str:
               );
 
               if (handle === "start") {
-                state.manualRanges[entry.id] = clampRange({ start: Math.min(aa, currentRange.end - 1), end: currentRange.end }, entry.proteinSequence.length);
+                state.manualRanges[entry.id] = clampRange({
+                  start: Math.min(aa, currentRange.end - 1),
+                  end: currentRange.end
+                }, entry.proteinSequence.length);
               } else {
-                state.manualRanges[entry.id] = clampRange({ start: currentRange.start, end: Math.max(aa, currentRange.start + 1) }, entry.proteinSequence.length);
+                state.manualRanges[entry.id] = clampRange({
+                  start: currentRange.start,
+                  end: Math.max(aa, currentRange.start + 1)
+                }, entry.proteinSequence.length);
               }
               debounceRender();
             };
@@ -4856,12 +4889,18 @@ def render_html(payload_json: str) -> str:
       }
 
       detailPanelEl.querySelector("#range-start-input")?.addEventListener("input", (event) => {
-        state.manualRanges[entry.id] = clampRange({ start: Number(event.target.value), end: getActiveRange(analysis).end }, entry.proteinSequence.length);
+        state.manualRanges[entry.id] = clampRange({
+          start: Number(event.target.value),
+          end: getActiveRange(analysis).end
+        }, entry.proteinSequence.length);
         debounceRender();
       });
 
       detailPanelEl.querySelector("#range-end-input")?.addEventListener("input", (event) => {
-        state.manualRanges[entry.id] = clampRange({ start: getActiveRange(analysis).start, end: Number(event.target.value) }, entry.proteinSequence.length);
+        state.manualRanges[entry.id] = clampRange({
+          start: getActiveRange(analysis).start,
+          end: Number(event.target.value)
+        }, entry.proteinSequence.length);
         debounceRender();
       });
 
@@ -4955,7 +4994,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument(
         "--metadata",
-        help="Optional metadata TSV/CSV file for the report metadata tab. Defaults to <input-dir>/metadata.tsv, <input-dir>/metadata.csv, <input-dir>/TF_list.csv, or repo-root TF_list.csv when present.",
+        help="Optional metadata TSV/CSV file for the report metadata tab. Defaults to <input-dir>/metadata.tsv, <input-dir>/metadata.csv, <input-dir>/TF_list.csv, repo-root metadata.tsv, repo-root metadata.csv, or repo-root TF_list.csv when present.",
     )
     parser.add_argument(
         "--input-dir",
