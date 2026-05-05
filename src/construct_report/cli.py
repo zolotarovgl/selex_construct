@@ -1818,10 +1818,12 @@ def render_html(payload_json: str) -> str:
       padding: 7px 8px;
       border-bottom: 1px solid var(--border-inner);
       border-right: 1px solid #efefef;
-      vertical-align: top;
+      vertical-align: middle;
       text-align: left;
-      word-break: break-word;
       background: #fff;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
     }
 
     .metadata-table th:last-child,
@@ -1873,6 +1875,11 @@ def render_html(payload_json: str) -> str:
       cursor: pointer;
       text-decoration: underline;
       text-underline-offset: 2px;
+      display: block;
+      width: 100%;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
     }
 
     .metadata-id-link:hover {
@@ -2715,6 +2722,41 @@ def render_html(payload_json: str) -> str:
     let _lastBatchKey = null;
     let _renderTimer = null;
 
+    function captureFocusedTextInput() {
+      const active = document.activeElement;
+      if (!active || !("id" in active) || !active.id) {
+        return null;
+      }
+      if (!["INPUT", "TEXTAREA"].includes(active.tagName)) {
+        return null;
+      }
+      return {
+        id: active.id,
+        selectionStart:
+          typeof active.selectionStart === "number" ? active.selectionStart : null,
+        selectionEnd:
+          typeof active.selectionEnd === "number" ? active.selectionEnd : null,
+      };
+    }
+
+    function restoreFocusedTextInput(snapshot) {
+      if (!snapshot?.id) {
+        return;
+      }
+      const next = document.getElementById(snapshot.id);
+      if (!next || !["INPUT", "TEXTAREA"].includes(next.tagName)) {
+        return;
+      }
+      next.focus({ preventScroll: true });
+      if (
+        typeof snapshot.selectionStart === "number" &&
+        typeof snapshot.selectionEnd === "number" &&
+        typeof next.setSelectionRange === "function"
+      ) {
+        next.setSelectionRange(snapshot.selectionStart, snapshot.selectionEnd);
+      }
+    }
+
     function setPageVisibility() {
       const showReview = state.view === "review";
       const showRanges = state.view === "ranges";
@@ -2749,6 +2791,14 @@ def render_html(payload_json: str) -> str:
         .replace(/>/g, "&gt;")
         .replace(/"/g, "&quot;")
         .replace(/'/g, "&#39;");
+    }
+
+    function clipDisplayText(value, maxChars = 50) {
+      const text = String(value ?? "");
+      if (text.length <= maxChars) {
+        return text;
+      }
+      return `${text.slice(0, Math.max(0, maxChars - 3))}...`;
     }
 
     function metadataSortValue(value) {
@@ -2860,7 +2910,7 @@ def render_html(payload_json: str) -> str:
         { key: "aaRange", label: "selected range", width: "12ch" },
         { key: "customRange", label: "custom range", width: "13ch" },
         { key: "automaticRange", label: "automatic range", width: "13ch" },
-        { key: "customAuto", label: "compare", width: "10ch" },
+        { key: "customAuto", label: "Custom vs Automatic", width: "18ch" },
         { key: "aaLength", label: "AA len", width: "12ch" },
         { key: "cdsRange", label: "CDS range", width: "12ch" },
         { key: "cdsLength", label: "CDS len", width: "11ch" },
@@ -2907,15 +2957,15 @@ def render_html(payload_json: str) -> str:
             <tbody>
               ${sortedRows.map((row) => `
                 <tr>
-                  <td style="min-width:28ch"><button type="button" class="metadata-id-link" data-range-select-id="${escapeHtml(row.id)}">${escapeHtml(row.id)}</button></td>
-                  <td style="min-width:10ch">${
+                  <td style="min-width:28ch" title="${escapeHtml(row.id)}"><button type="button" class="metadata-id-link" data-range-select-id="${escapeHtml(row.id)}" title="${escapeHtml(row.id)}">${escapeHtml(row.id)}</button></td>
+                  <td style="min-width:10ch" title="${escapeHtml(row.source)}">${
                     row.source === "manual"
                       ? '<span class="review-mini-pill pill-amber">manual</span>'
                       : escapeHtml(row.source)
                   }</td>
-                  <td style="min-width:12ch">${escapeHtml(row.aaRange)}</td>
-                  <td style="min-width:13ch">${row.customRange ? escapeHtml(row.customRange) : '<span class="status-na">NA</span>'}</td>
-                  <td style="min-width:13ch">${
+                  <td style="min-width:12ch" title="${escapeHtml(row.aaRange)}">${escapeHtml(row.aaRange)}</td>
+                  <td style="min-width:13ch" title="${escapeHtml(row.customRange || 'NA')}">${row.customRange ? escapeHtml(row.customRange) : '<span class="status-na">NA</span>'}</td>
+                  <td style="min-width:13ch" title="${escapeHtml(row.automaticRange || 'NA')}">${
                     row.automaticRange
                       ? escapeHtml(row.automaticRange)
                       : '<span class="status-na">NA</span>'
@@ -2927,11 +2977,11 @@ def render_html(payload_json: str) -> str:
                         ? '<span class="review-mini-pill pill-green">match</span>'
                         : '<span class="status-na">NA</span>'
                   }</td>
-                  <td style="min-width:12ch">${escapeHtml(String(row.aaLength))}</td>
-                  <td style="min-width:12ch">${escapeHtml(row.cdsRange || "NA")}</td>
-                  <td style="min-width:11ch">${escapeHtml(String(row.cdsLength || "NA"))}</td>
+                  <td style="min-width:12ch" title="${escapeHtml(String(row.aaLength))}">${escapeHtml(String(row.aaLength))}</td>
+                  <td style="min-width:12ch" title="${escapeHtml(row.cdsRange || "NA")}">${escapeHtml(row.cdsRange || "NA")}</td>
+                  <td style="min-width:11ch" title="${escapeHtml(String(row.cdsLength || "NA"))}">${escapeHtml(String(row.cdsLength || "NA"))}</td>
                   <td style="min-width:12ch"><span class="review-mini-pill ${row.constructStatus === "OK" ? "pill-green" : "pill-red"}">${escapeHtml(row.constructStatus)}</span></td>
-                  <td style="min-width:13ch">${escapeHtml(row.automaticLabel)}</td>
+                  <td style="min-width:13ch" title="${escapeHtml(row.automaticLabel)}">${escapeHtml(row.automaticLabel)}</td>
                 </tr>
               `).join("")}
             </tbody>
@@ -3035,9 +3085,9 @@ def render_html(payload_json: str) -> str:
                         ${columnSpecs.map((column) => {
                           const value = String(row[column.key] ?? "");
                           if (column.key === metadataTable.idKey && dataset.some((entry) => entry.id === value)) {
-                            return `<td style="min-width:${column.minWidthCh}ch"><button type="button" class="metadata-id-link" data-metadata-select-id="${escapeHtml(value)}">${escapeHtml(value)}</button></td>`;
+                            return `<td style="min-width:${column.minWidthCh}ch" title="${escapeHtml(value)}"><button type="button" class="metadata-id-link" data-metadata-select-id="${escapeHtml(value)}" title="${escapeHtml(value)}">${escapeHtml(clipDisplayText(value, 50))}</button></td>`;
                           }
-                          return `<td style="min-width:${column.minWidthCh}ch">${escapeHtml(value)}</td>`;
+                          return `<td style="min-width:${column.minWidthCh}ch" title="${escapeHtml(value)}">${escapeHtml(clipDisplayText(value, 50))}</td>`;
                         }).join("")}
                       </tr>
                     `).join("")}
@@ -3050,7 +3100,7 @@ def render_html(payload_json: str) -> str:
 
       metadataPageEl.querySelector("#metadata-search-input")?.addEventListener("input", (event) => {
         state.metadataSearch = event.target.value;
-        render();
+        debounceRender();
       });
       metadataPageEl.querySelectorAll("[data-metadata-sort]").forEach((button) => {
         button.addEventListener("click", () => {
@@ -3575,9 +3625,19 @@ def render_html(payload_json: str) -> str:
       return analysis.entry.reference?.status_range ?? "";
     }
 
-    function analysisNeedsAttention(analysis) {
+    function analysisGroup(analysis) {
+      if (analysisHasCdsProteinProblem(analysis)) {
+        return "CDS error";
+      }
+      const customDiff = customAutoDifference(analysis);
+      if (customDiff?.different) {
+        return "Range mismatch";
+      }
       const reviewStatus = analysisReviewStatus(analysis);
-      return reviewStatus !== "Good";
+      if (reviewStatus && reviewStatus !== "Good") {
+        return "Range mismatch";
+      }
+      return "Good";
     }
 
     function defaultRangeSourceLabel(analysis) {
@@ -4850,8 +4910,9 @@ def render_html(payload_json: str) -> str:
           <input id="search-input" value="${escapeHtml(state.search)}" placeholder="Search sequence ID or domain…" aria-label="Search">
           <select id="filter-input" aria-label="Filter">
             <option value="all"${state.filter === "all" ? " selected" : ""}>All</option>
-            <option value="good"${state.filter === "good" ? " selected" : ""}>Good only</option>
-            <option value="attention"${state.filter === "attention" ? " selected" : ""}>Attention</option>
+            <option value="good"${state.filter === "good" ? " selected" : ""}>Good</option>
+            <option value="range_mismatch"${state.filter === "range_mismatch" ? " selected" : ""}>Range mismatch</option>
+            <option value="cds_error"${state.filter === "cds_error" ? " selected" : ""}>CDS error</option>
           </select>
           <select id="sort-input" aria-label="Sort by">
             <option value="id"${state.sort === "id" ? " selected" : ""}>Sort: ID</option>
@@ -4881,11 +4942,12 @@ def render_html(payload_json: str) -> str:
                       ? "manual"
                       : defaultRangeSourceLabel(analysis);
                     const rangeStatus = analysisReviewStatus(analysis);
+                    const groupStatus = analysisGroup(analysis);
                     const structureStatus = analysis.entry.reference?.status_structure ?? "";
                     const cdsProblem = analysisHasCdsProteinProblem(analysis);
 
                     return `
-                      <button type="button" class="review-row ${active ? "review-row-active" : ""}" data-select-id="${escapeHtml(analysis.entry.id)}" data-range-status="${escapeHtml(rangeStatus)}">
+                      <button type="button" class="review-row ${active ? "review-row-active" : ""}" data-select-id="${escapeHtml(analysis.entry.id)}" data-range-status="${escapeHtml(groupStatus === "Good" ? rangeStatus : groupStatus)}">
                         <div class="review-row-top">
                           <div class="review-row-title">
                             <strong>${escapeHtml(analysis.entry.id)}</strong>
@@ -4898,6 +4960,9 @@ def render_html(payload_json: str) -> str:
                         </div>
                         <div class="review-row-id">${escapeHtml(domainSummary)}</div>
                         <div class="review-row-summary">
+                          <span class="review-mini-pill ${
+                            groupStatus === "Good" ? "pill-green" : groupStatus === "CDS error" ? "pill-red" : "pill-amber"
+                          }">${escapeHtml(groupStatus)}</span>
                           <span class="review-mini-pill">evidence: ${availableEvidenceCount}/${evidenceCardsForRow.length}</span>
                           ${cdsProblem ? `<span class="review-mini-pill pill-red">CDS mismatch</span>` : ""}
                           ${
@@ -4919,7 +4984,7 @@ def render_html(payload_json: str) -> str:
 
       batchPanelEl.querySelector("#search-input")?.addEventListener("input", (event) => {
         state.search = event.target.value;
-        render();
+        debounceRender();
       });
 
       batchPanelEl.querySelector("#filter-input")?.addEventListener("change", (event) => {
@@ -5339,6 +5404,7 @@ def render_html(payload_json: str) -> str:
     }
 
     function render() {
+      const focusedInput = captureFocusedTextInput();
       const analyses = buildAnalyses();
       const visibleAnalyses = analyses.filter((analysis) => {
         const haystack = [
@@ -5349,12 +5415,15 @@ def render_html(payload_json: str) -> str:
           .join(" ")
           .toLowerCase();
         const matchesSearch = haystack.includes(state.search.toLowerCase());
+        const group = analysisGroup(analysis);
         const matchesFilter =
           state.filter === "all"
             ? true
             : state.filter === "good"
-              ? !analysisNeedsAttention(analysis)
-              : analysisNeedsAttention(analysis);
+              ? group === "Good"
+              : state.filter === "range_mismatch"
+                ? group === "Range mismatch"
+                : group === "CDS error";
         return matchesSearch && matchesFilter;
       });
 
@@ -5391,6 +5460,8 @@ def render_html(payload_json: str) -> str:
       } else {
         renderMetadataTab();
       }
+
+      restoreFocusedTextInput(focusedInput);
     }
 
     render();
