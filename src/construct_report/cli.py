@@ -579,27 +579,31 @@ def build_structure_model_mapping(
     model_sequence = parsed_model["sequence"]
     residue_count = len(residue_numbers)
 
-    mapping_track = None
-    for candidate in (local_track, fallback_track):
-        if candidate and candidate.get("compatible") and candidate.get("offset"):
-            mapping_track = candidate
-            break
-
     protein_start = None
     mapping_source = None
     model_length = residue_count
 
-    if mapping_track:
-        protein_start = int(mapping_track["offset"])
-        mapping_source = mapping_track["label"]
-        model_length = min(residue_count, len(mapping_track.get("sequence", "")) or residue_count)
-    elif model_sequence:
+    # Prefer the actual PDB sequence placement when it can be matched.
+    # DSSP/UniProt structure tracks often cover only the structured subset of a
+    # full-length model, and using their offset to anchor the whole PDB shifts
+    # the displayed model range incorrectly.
+    if model_sequence:
         sequence_offset = locate_sequence(protein_sequence, model_sequence)
         if sequence_offset:
             protein_start = sequence_offset
             mapping_source = "PDB sequence"
             model_length = min(residue_count, len(model_sequence))
-    elif residue_count == len(protein_sequence):
+    if protein_start is None:
+        for candidate in (local_track, fallback_track):
+            if candidate and candidate.get("compatible") and candidate.get("offset"):
+                protein_start = int(candidate["offset"])
+                mapping_source = candidate["label"]
+                model_length = min(
+                    residue_count,
+                    len(candidate.get("sequence", "")) or residue_count,
+                )
+                break
+    if protein_start is None and residue_count == len(protein_sequence):
         protein_start = 1
         mapping_source = "full-length fallback"
         model_length = residue_count
@@ -657,6 +661,22 @@ def compute_dssp_from_pdb(pdb_path: Path, pdb_text: str) -> dict[str, Any] | Non
         return None
 
 
+def dssp_matches_pdb_model(raw_track: dict[str, Any] | None, pdb_text: str) -> bool:
+    if not raw_track:
+        return False
+
+    dssp_sequence = str(raw_track.get("sequence") or "")
+    if not dssp_sequence:
+        return False
+
+    parsed_model = parse_pdb_model(pdb_text)
+    model_sequence = parsed_model.get("sequence") or ""
+    if not model_sequence:
+        return False
+
+    return dssp_sequence == model_sequence
+
+
 def build_evidence_for_protein(
     protein_id: str,
     protein_sequence: str,
@@ -665,6 +685,7 @@ def build_evidence_for_protein(
     plddt_files: list[Path] | None = None,
 ) -> dict[str, Any]:
     bundle: dict[str, Any] = {}
+    raw_structure_dssp: dict[str, Any] | None = None
 
     # Evidence support is intentionally explicit for now: only these known
     # subdirectory names are loaded into report tracks.
@@ -701,10 +722,11 @@ def build_evidence_for_protein(
                     parse_structure_file(content),
                 )
             elif kind == "structure_dssp":
+                raw_structure_dssp = parse_structure_file(content)
                 bundle["structureDssp"] = map_structure_track(
                     protein_sequence,
                     "Local DSSP structure",
-                    parse_structure_file(content),
+                    raw_structure_dssp,
                 )
         except (ValueError, IndexError) as exc:
             print(f"WARNING: skipping {path}: {exc}", file=sys.stderr)
@@ -717,12 +739,24 @@ def build_evidence_for_protein(
         structure_path = matching_structures[0]
         structure_text = structure_path.read_text(encoding="utf-8")
 
-        # Compute DSSP from PDB when no pre-computed file is available
+        should_recompute_dssp = False
         if "structureDssp" not in bundle:
+            should_recompute_dssp = True
+        elif not dssp_matches_pdb_model(raw_structure_dssp, structure_text):
+            print(
+                (
+                    f"WARNING: precomputed DSSP for {protein_id} does not match "
+                    f"{structure_path.name}; recomputing from PDB"
+                ),
+                file=sys.stderr,
+            )
+            should_recompute_dssp = True
+
+        if should_recompute_dssp:
             raw_dssp = compute_dssp_from_pdb(structure_path, structure_text)
             if raw_dssp:
                 bundle["structureDssp"] = map_structure_track(
-                    protein_sequence, "structureDssp", raw_dssp
+                    protein_sequence, "Local DSSP structure", raw_dssp
                 )
 
         bundle["structureModel"] = {

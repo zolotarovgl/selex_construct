@@ -1,12 +1,18 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 from construct_report.cli import (
+    build_structure_model_mapping,
+    dssp_matches_pdb_model,
     generate_main,
     load_dataset_bundle,
     parse_custom_ranges,
     parse_iupred_file,
+    parse_fasta,
+    parse_pdb_model,
+    parse_structure_file,
     parse_metadata_table,
 )
 
@@ -195,3 +201,112 @@ def test_generate_main_picks_up_input_dir_metadata(tmp_path) -> None:
             "zscore": "12.5",
         }
     ]
+
+
+def test_structure_mapping_prefers_pdb_sequence_over_partial_dssp_track() -> None:
+    protein = parse_fasta(
+        Path("examples/fulldata/proteins.fasta").read_text(encoding="utf-8")
+    )["Nvec_vc1.1_XM_001626717.3"]
+    model_text = Path(
+        "examples/fulldata/evidence/structures/Nvec_vc1.1_XM_001626717.3.pdb"
+    ).read_text(encoding="utf-8")
+    dssp_track = parse_structure_file(
+        Path(
+            "examples/fulldata/evidence/structure_dssp/Nvec_vc1.1_XM_001626717.3.out"
+        ).read_text(encoding="utf-8")
+    )
+    parsed_model = parse_pdb_model(model_text)
+
+    mapping = build_structure_model_mapping(
+        protein_sequence=protein,
+        model_text=model_text,
+        local_track={
+            "compatible": True,
+            "offset": 158,
+            "label": "Local DSSP structure",
+            "sequence": dssp_track["sequence"],
+        },
+        fallback_track=None,
+    )
+
+    assert mapping["mappingSource"] == "PDB sequence"
+    assert mapping["proteinStart"] == 1
+    assert mapping["proteinEnd"] == len(protein)
+    assert mapping["modelLength"] == len(parsed_model["residueNumbers"])
+
+
+def test_dssp_matches_pdb_model_flags_partial_track_as_mismatch() -> None:
+    model_text = Path(
+        "examples/fulldata/evidence/structures/Nvec_vc1.1_XM_001626717.3.pdb"
+    ).read_text(encoding="utf-8")
+    dssp_track = parse_structure_file(
+        Path(
+            "examples/fulldata/evidence/structure_dssp/Nvec_vc1.1_XM_001626717.3.out"
+        ).read_text(encoding="utf-8")
+    )
+
+    assert dssp_matches_pdb_model(dssp_track, model_text) is False
+
+
+def test_load_dataset_bundle_recomputes_mismatched_dssp_from_pdb(tmp_path, monkeypatch) -> None:
+    pep_path = tmp_path / "proteins.fasta"
+    cds_path = tmp_path / "cds.fasta"
+    domains_path = tmp_path / "domains.individual.bed"
+    evidence_root = tmp_path / "evidence"
+    dssp_dir = evidence_root / "structure_dssp"
+    structure_dir = evidence_root / "structures"
+    dssp_dir.mkdir(parents=True)
+    structure_dir.mkdir(parents=True)
+
+    protein_id = "P1"
+    protein_sequence = "M" * 20
+    cds_sequence = "ATG" * 20
+
+    pep_path.write_text(f">{protein_id}\n{protein_sequence}\n", encoding="utf-8")
+    cds_path.write_text(f">{protein_id}\n{cds_sequence}\n", encoding="utf-8")
+    domains_path.write_text(f"{protein_id}\t1\t10\tTest\n", encoding="utf-8")
+
+    (dssp_dir / f"{protein_id}.out").write_text(
+        "\n".join(
+            [
+                "5 residues parsed",
+                f">{protein_id}@sequence",
+                "AAAAA",
+                f">{protein_id}@secondary",
+                "HHHHH",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    pdb_text = "\n".join(
+        [
+            "ATOM      1  CA  ALA A   1       0.000   0.000   0.000  1.00 50.00           C",
+            "ATOM      2  CA  ALA A   2       1.000   0.000   0.000  1.00 50.00           C",
+            "TER",
+            "END",
+        ]
+    )
+    (structure_dir / f"{protein_id}.pdb").write_text(pdb_text, encoding="utf-8")
+
+    def fake_compute_dssp_from_pdb(_path: Path, _text: str) -> dict[str, object]:
+        return {"sequence": protein_sequence, "values": ["H"] * len(protein_sequence)}
+
+    monkeypatch.setattr(
+        "construct_report.cli.compute_dssp_from_pdb",
+        fake_compute_dssp_from_pdb,
+    )
+
+    bundle = load_dataset_bundle(
+        pep_path=pep_path,
+        cds_path=cds_path,
+        domains_path=None,
+        domains_individual_path=domains_path,
+        evidence_root=evidence_root,
+    )
+
+    entry = bundle["entries"][0]
+    assert entry["evidence"]["structureDssp"]["compatible"] is True
+    assert entry["evidence"]["structureDssp"]["coverage"] == 1.0
+    assert entry["evidence"]["structureDssp"]["values"] == ["H"] * len(protein_sequence)
