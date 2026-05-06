@@ -1413,6 +1413,8 @@ def render_html(payload_json: str) -> str:
       display: grid;
       grid-template-columns: minmax(240px, 290px) minmax(0, 1fr);
       gap: 8px;
+      min-height: calc(100vh - 128px);
+      align-items: start;
     }
 
     .panel {
@@ -1426,8 +1428,11 @@ def render_html(payload_json: str) -> str:
       padding: 0;
       display: flex;
       flex-direction: column;
-      min-height: calc(100vh - 80px);
+      height: calc(100vh - 128px);
+      min-height: 0;
       overflow: hidden;
+      position: sticky;
+      top: 64px;
     }
 
     .batch-panel-header {
@@ -1476,7 +1481,9 @@ def render_html(payload_json: str) -> str:
 
     .review-list {
       flex: 1;
+      min-height: 0;
       overflow-y: auto;
+      scrollbar-gutter: stable;
     }
 
     .review-row {
@@ -1784,7 +1791,7 @@ def render_html(payload_json: str) -> str:
       background: #fafafa;
     }
 
-    .metadata-toolbar input {
+    .metadata-toolbar input:not(.results-preview-control) {
       flex: 1 1 280px;
       min-width: 220px;
       height: 28px;
@@ -1884,6 +1891,91 @@ def render_html(payload_json: str) -> str:
 
     .metadata-id-link:hover {
       color: #1b4f7a;
+    }
+
+    .results-preview-control {
+      flex: 0 0 56px;
+      width: 56px;
+      min-width: 56px;
+      max-width: 56px;
+      height: 28px;
+      padding: 0 4px;
+      border: 1px solid var(--border);
+      border-radius: 3px;
+      font-size: 11px;
+      background: #fff;
+      color: var(--ink);
+    }
+
+    .results-columns-picker {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 6px;
+      padding: 6px 8px;
+      border-top: 1px solid var(--border-light);
+      background: #fafafa;
+      width: fit-content;
+      max-width: 320px;
+    }
+
+    .results-columns-picker-label {
+      font-size: 11px;
+      color: var(--muted);
+      white-space: nowrap;
+    }
+
+    .results-columns-grid {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 4px;
+      width: auto;
+    }
+
+    .results-column-option {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      font-size: 10px;
+      color: #444;
+      white-space: nowrap;
+      justify-content: flex-start;
+      line-height: 1.2;
+    }
+
+    .results-column-option input {
+      margin: 0;
+    }
+
+    .results-seq-cell {
+      white-space: normal !important;
+      overflow: visible !important;
+      text-overflow: clip !important;
+      vertical-align: top !important;
+    }
+
+    .results-seq-button {
+      appearance: none;
+      display: block;
+      width: 100%;
+      border: none;
+      background: transparent;
+      padding: 0;
+      margin: 0;
+      color: #333;
+      font: inherit;
+      text-align: left;
+      cursor: pointer;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .results-seq-button-expanded {
+      white-space: normal;
+      overflow-wrap: anywhere;
+      word-break: break-word;
     }
 
     .ranges-summary-bar {
@@ -2646,6 +2738,7 @@ def render_html(payload_json: str) -> str:
       <section id="detail-panel" class="panel detail-column"></section>
     </div>
     <section id="ranges-page" class="panel metadata-panel" hidden></section>
+    <section id="results-page" class="panel metadata-panel" hidden></section>
     <section id="metadata-page" class="panel metadata-panel" hidden></section>
   </main>
 
@@ -2703,6 +2796,10 @@ def render_html(payload_json: str) -> str:
       structureDockRight: false,
       rangesSortKey: "id",
       rangesSortDir: "asc",
+      resultsPreviewLength: 50,
+      resultsExpanded: {},
+      resultsMetadataColumns: [],
+      resultsMetadataPickerOpen: false,
       metadataSearch: "",
       metadataSortKey: metadataTable?.idKey ?? metadataTable?.columns?.[0]?.key ?? "",
       metadataSortDir: "asc",
@@ -2714,6 +2811,7 @@ def render_html(payload_json: str) -> str:
     const batchPanelEl = document.getElementById("batch-panel");
     const detailPanelEl = document.getElementById("detail-panel");
     const rangesPageEl = document.getElementById("ranges-page");
+    const resultsPageEl = document.getElementById("results-page");
     const metadataPageEl = document.getElementById("metadata-page");
 
     let _structureCache = { entryId: null, viewer: null, containerEl: null, layoutMode: null };
@@ -2760,12 +2858,15 @@ def render_html(payload_json: str) -> str:
     function setPageVisibility() {
       const showReview = state.view === "review";
       const showRanges = state.view === "ranges";
+      const showResults = state.view === "results";
       const showMetadata = state.view === "metadata";
       reviewPageEl.hidden = !showReview;
       rangesPageEl.hidden = !showRanges;
+      resultsPageEl.hidden = !showResults;
       metadataPageEl.hidden = !showMetadata;
       reviewPageEl.classList.toggle("app-page-hidden", !showReview);
       rangesPageEl.classList.toggle("app-page-hidden", !showRanges);
+      resultsPageEl.classList.toggle("app-page-hidden", !showResults);
       metadataPageEl.classList.toggle("app-page-hidden", !showMetadata);
     }
 
@@ -2889,6 +2990,9 @@ def render_html(payload_json: str) -> str:
                </button>`
             : ""
         }
+        <button type="button" class="app-tab ${state.view === "results" ? "app-tab-active" : ""}" data-app-view="results">
+          Results (${dataset.length})
+        </button>
       `;
       if (state.view === "metadata" && !hasMetadata) {
         state.view = "review";
@@ -3013,6 +3117,200 @@ def render_html(payload_json: str) -> str:
           }
           state.selectedId = targetId;
           state.view = "review";
+          render();
+        });
+      });
+    }
+
+    function buildResultsRows(analyses) {
+      const metadataIdKey = metadataTable?.idKey;
+      const metadataById = metadataIdKey
+        ? new Map(metadataTable.rows.map((row) => [String(row[metadataIdKey] ?? ""), row]))
+        : new Map();
+      return analyses.map((analysis) => {
+        const activeRange = getActiveRange(analysis);
+        const construct = buildConstruct(analysis.entry, activeRange);
+        const metadata = metadataById.get(analysis.entry.id) ?? {};
+        return {
+          id: analysis.entry.id,
+          proteinLength: analysis.entry.proteinSequence.length,
+          cdsLength: analysis.entry.cdsSequence.length,
+          proteinRange: formatRange(activeRange),
+          cdsRange: construct.cdsRange ? formatRange(construct.cdsRange) : "",
+          proteinSequence: construct.peptide,
+          cdsSequence: construct.cds,
+          metadata,
+        };
+      });
+    }
+
+    function buildResultsExportTsv(rows, metadataColumns = []) {
+      const headers = [
+        "id",
+        "protein_length",
+        "cds_length",
+        "protein_range",
+        "cds_range",
+        "protein_sequence",
+        "cds_sequence",
+      ].concat(metadataColumns.map((column) => column.key));
+      const lines = [headers.join("\\t")];
+      rows.forEach((row) => {
+        lines.push([
+          row.id,
+          row.proteinLength,
+          row.cdsLength,
+          row.proteinRange,
+          row.cdsRange,
+          row.proteinSequence,
+          row.cdsSequence,
+        ].concat(metadataColumns.map((column) => row.metadata?.[column.key] ?? "")).join("\\t"));
+      });
+      return lines.join("\\n");
+    }
+
+    function renderResultsTab(analyses) {
+      const rows = buildResultsRows(analyses);
+      const availableMetadataColumns = hasMetadata
+        ? metadataTable.columns.filter((column) => column.key !== metadataTable.idKey)
+        : [];
+      const selectedMetadataKeys = new Set(state.resultsMetadataColumns);
+      const selectedMetadataColumns = availableMetadataColumns.filter((column) =>
+        selectedMetadataKeys.has(column.key)
+      );
+      const exportHref = buildExportHref(buildResultsExportTsv(rows, selectedMetadataColumns));
+      const columns = [
+        { key: "id", label: "ID", width: "28ch" },
+        { key: "proteinLength", label: "Protein length", width: "12ch" },
+        { key: "cdsLength", label: "CDS length", width: "12ch" },
+        { key: "proteinRange", label: "Protein range", width: "12ch" },
+        { key: "cdsRange", label: "CDS range", width: "12ch" },
+        { key: "proteinSequence", label: "Protein sequence", width: "30ch" },
+        { key: "cdsSequence", label: "CDS sequence", width: "30ch" },
+      ].concat(
+        selectedMetadataColumns.map((column) => ({
+          key: column.key,
+          label: column.label,
+          width: `${Math.max(14, String(column.label || column.key || "").length + 2)}ch`,
+        }))
+      );
+      const previewLength = Math.max(1, Number(state.resultsPreviewLength) || 30);
+
+      resultsPageEl.innerHTML = `
+        <div class="metadata-panel-header">
+          <h2>Results</h2>
+          <p>Live per-protein selected construct output based on the current ranges in the review pane.</p>
+        </div>
+        <div class="metadata-toolbar">
+          <label class="metadata-toolbar-note" for="results-preview-length">Preview chars</label>
+          <input
+            id="results-preview-length"
+            class="results-preview-control"
+            type="number"
+            min="1"
+            step="1"
+            value="${escapeHtml(String(previewLength))}"
+            aria-label="Results preview characters"
+          >
+          ${
+            availableMetadataColumns.length
+              ? `<button type="button" class="action-button action-button-secondary" id="results-metadata-toggle">
+                   Add metadata${selectedMetadataColumns.length ? ` (${selectedMetadataColumns.length})` : ""}
+                 </button>`
+              : ""
+          }
+          <span class="metadata-toolbar-note">${rows.length} proteins · exporting full selected protein/CDS sequences</span>
+          <a class="action-button action-button-secondary" href="${exportHref}" download="selected_results.tsv">Export results TSV</a>
+        </div>
+        ${
+          availableMetadataColumns.length && state.resultsMetadataPickerOpen
+            ? `<div class="results-columns-picker">
+                 <span class="results-columns-picker-label">Metadata columns</span>
+                 <div class="results-columns-grid">
+                   ${availableMetadataColumns.map((column) => `
+                     <label class="results-column-option">
+                       <input
+                         type="checkbox"
+                         data-results-metadata-column="${escapeHtml(column.key)}"
+                         ${selectedMetadataKeys.has(column.key) ? "checked" : ""}
+                       >
+                       <span>${escapeHtml(column.label)}</span>
+                     </label>
+                   `).join("")}
+                 </div>
+               </div>`
+            : ""
+        }
+        <div class="metadata-table-wrap">
+          <table class="metadata-table">
+            <colgroup>
+              ${columns.map((column) => `<col style="width:${column.width}">`).join("")}
+            </colgroup>
+            <thead>
+              <tr>
+                ${columns.map((column) => `
+                  <th style="min-width:${column.width}">
+                    <span class="metadata-th-btn" style="cursor:default">${escapeHtml(column.label)}</span>
+                  </th>
+                `).join("")}
+              </tr>
+            </thead>
+            <tbody>
+              ${rows.map((row) => `
+                <tr>
+                  <td style="min-width:28ch" title="${escapeHtml(row.id)}"><button type="button" class="metadata-id-link" data-results-select-id="${escapeHtml(row.id)}" title="${escapeHtml(row.id)}">${escapeHtml(row.id)}</button></td>
+                  <td style="min-width:12ch" title="${escapeHtml(String(row.proteinLength))}">${escapeHtml(String(row.proteinLength))}</td>
+                  <td style="min-width:12ch" title="${escapeHtml(String(row.cdsLength))}">${escapeHtml(String(row.cdsLength))}</td>
+                  <td style="min-width:12ch" title="${escapeHtml(row.proteinRange)}">${escapeHtml(row.proteinRange)}</td>
+                  <td style="min-width:12ch" title="${escapeHtml(row.cdsRange || "NA")}">${escapeHtml(row.cdsRange || "NA")}</td>
+                  <td class="results-seq-cell" style="min-width:30ch" title="${escapeHtml(row.proteinSequence)}"><button type="button" class="results-seq-button ${state.resultsExpanded[`${row.id}:protein`] ? "results-seq-button-expanded" : ""}" data-results-seq-key="${escapeHtml(`${row.id}:protein`)}">${escapeHtml(state.resultsExpanded[`${row.id}:protein`] ? row.proteinSequence : clipDisplayText(row.proteinSequence, previewLength))}</button></td>
+                  <td class="results-seq-cell" style="min-width:30ch" title="${escapeHtml(row.cdsSequence)}"><button type="button" class="results-seq-button ${state.resultsExpanded[`${row.id}:cds`] ? "results-seq-button-expanded" : ""}" data-results-seq-key="${escapeHtml(`${row.id}:cds`)}">${escapeHtml(state.resultsExpanded[`${row.id}:cds`] ? row.cdsSequence : clipDisplayText(row.cdsSequence, previewLength))}</button></td>
+                  ${selectedMetadataColumns.map((column) => `<td style="min-width:${Math.max(14, String(column.label || column.key || "").length + 2)}ch" title="${escapeHtml(String(row.metadata?.[column.key] ?? ""))}">${escapeHtml(clipDisplayText(String(row.metadata?.[column.key] ?? ""), 50))}</td>`).join("")}
+                </tr>
+              `).join("")}
+            </tbody>
+          </table>
+        </div>
+      `;
+
+      resultsPageEl.querySelector("#results-preview-length")?.addEventListener("input", (event) => {
+        state.resultsPreviewLength = Math.max(1, Number(event.target.value) || 1);
+        debounceRender();
+      });
+
+      resultsPageEl.querySelector("#results-metadata-toggle")?.addEventListener("click", () => {
+        state.resultsMetadataPickerOpen = !state.resultsMetadataPickerOpen;
+        render();
+      });
+
+      resultsPageEl.querySelectorAll("[data-results-metadata-column]").forEach((input) => {
+        input.addEventListener("change", () => {
+          state.resultsMetadataColumns = Array.from(
+            resultsPageEl.querySelectorAll("[data-results-metadata-column]:checked")
+          ).map((item) => item.getAttribute("data-results-metadata-column")).filter(Boolean);
+          render();
+        });
+      });
+
+      resultsPageEl.querySelectorAll("[data-results-select-id]").forEach((button) => {
+        button.addEventListener("click", () => {
+          const targetId = button.getAttribute("data-results-select-id");
+          if (!targetId) {
+            return;
+          }
+          state.selectedId = targetId;
+          state.view = "review";
+          render();
+        });
+      });
+
+      resultsPageEl.querySelectorAll("[data-results-seq-key]").forEach((button) => {
+        button.addEventListener("click", () => {
+          const key = button.getAttribute("data-results-seq-key");
+          if (!key) {
+            return;
+          }
+          state.resultsExpanded[key] = !state.resultsExpanded[key];
           render();
         });
       });
@@ -5457,6 +5755,8 @@ def render_html(payload_json: str) -> str:
         renderDetail(selectedAnalysis);
       } else if (state.view === "ranges") {
         renderRangesTab(analyses);
+      } else if (state.view === "results") {
+        renderResultsTab(analyses);
       } else {
         renderMetadataTab();
       }
