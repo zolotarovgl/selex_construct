@@ -1,5 +1,8 @@
 # HT-SELEX construct design 
 
+![](img/app.png)
+
+
 `construct_report` is a standalone Python tool that generates recommended constructs, exportable CDS outputs, and a self-contained HTML report for protein construct review.
 The preferred workflow is now a two-step pipeline:
 
@@ -13,7 +16,6 @@ Given protein sequences, CDS sequences, and a BED file with domain annotations, 
 3. `r3` expands further if compatible structure tracks contain structured runs near the `r2` boundaries.
 4. If the resulting start is near the N-terminus, it can snap to residue `1`.
 
-![](img/ranges.png)
 
 # Quick Start
 
@@ -33,7 +35,8 @@ construct-report \
 # TODOs:  
 
 - A dedicated pipeline for the evidence generation
-- Make sure the "Metadata" tab works.   
+- Make sure the "Metadata" tab works.
+- Figure out and describe how the uniprot structures have been mapped   
 
 # Manual   
 
