@@ -3832,7 +3832,7 @@ def render_html(payload_json: str) -> str:
 
       const runsSvg = buildRuns(track.values)
         .filter((run) => run.value !== null)
-        .map((run) => drawCartoonRun(run, "#d9d9d9", "#8f8f8f"))
+        .map((run) => drawCartoonRun(run, "#ededed", "#c7c7c7"))
         .join("");
       const selectedRunsSvg = buildRuns(track.values)
         .filter((run) => run.value !== null)
@@ -5144,7 +5144,7 @@ def render_html(payload_json: str) -> str:
     }
 
     function _applyStructureColors(viewer, entry, activeRange, withZoom) {
-      viewer.setStyle({}, { cartoon: { color: "#d0d0d0" } });
+      viewer.setStyle({}, { cartoon: { color: "#ececec" } });
       const selection = getStructureSelection(entry, activeRange);
 
       if (selection.hasOverlap && selection.residueRange) {
