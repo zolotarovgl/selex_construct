@@ -5506,6 +5506,7 @@ def render_html(payload_json: str) -> str:
     }
 
     function renderBatch(visibleAnalyses, selectedId) {
+      const reviewListScrollTop = batchPanelEl.querySelector(".review-list")?.scrollTop ?? 0;
       batchPanelEl.innerHTML = `
         <div class="batch-panel-header">
           <h2>Proteins (${visibleAnalyses.length})</h2>
@@ -5608,6 +5609,11 @@ def render_html(payload_json: str) -> str:
           render();
         });
       });
+
+      const reviewListEl = batchPanelEl.querySelector(".review-list");
+      if (reviewListEl) {
+        reviewListEl.scrollTop = reviewListScrollTop;
+      }
     }
 
     function renderDetail(analysis) {
