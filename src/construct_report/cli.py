@@ -1919,6 +1919,13 @@ def render_html(payload_json: str) -> str:
       max-width: 320px;
     }
 
+    .results-columns-picker-top {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      width: 100%;
+    }
+
     .results-columns-picker-label {
       font-size: 11px;
       color: var(--muted);
@@ -2594,6 +2601,70 @@ def render_html(payload_json: str) -> str:
       min-height: 100%;
     }
 
+    .structure-schematic-overlay {
+      position: absolute;
+      top: 10px;
+      left: 10px;
+      z-index: 2;
+      width: 250px;
+      padding: 6px 8px;
+      border: 1px solid rgba(0, 0, 0, 0.08);
+      border-radius: 4px;
+      background: rgba(255, 255, 255, 0.9);
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+      backdrop-filter: blur(2px);
+    }
+
+    .structure-schematic-title {
+      margin: 0 0 4px;
+      font-size: 10px;
+      font-weight: 700;
+      color: #555;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+
+    .structure-schematic-svg {
+      display: block;
+      width: 100%;
+      height: 42px;
+    }
+
+    .structure-color-controls {
+      position: absolute;
+      top: 10px;
+      right: 10px;
+      z-index: 2;
+      display: inline-flex;
+      gap: 4px;
+      padding: 4px;
+      border: 1px solid rgba(0, 0, 0, 0.08);
+      border-radius: 4px;
+      background: rgba(255, 255, 255, 0.9);
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+      backdrop-filter: blur(2px);
+    }
+
+    .structure-color-button {
+      appearance: none;
+      border: 1px solid var(--border-light);
+      border-radius: 3px;
+      background: #fff;
+      color: #555;
+      padding: 2px 6px;
+      font: inherit;
+      font-size: 10px;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+
+    .structure-color-button-active {
+      background: #e8eef4;
+      color: #1d4c75;
+      border-color: rgba(40, 104, 160, 0.3);
+      font-weight: 700;
+    }
+
     .structure-viewer canvas {
       display: block;
       width: 100% !important;
@@ -2793,7 +2864,8 @@ def render_html(payload_json: str) -> str:
       sort: "id",
       selectedId: initialEntry?.id ?? "",
       manualRanges: {},
-      structureDockRight: false,
+      structureDockRight: true,
+      structureColorMode: "rainbow",
       rangesSortKey: "id",
       rangesSortDir: "asc",
       resultsPreviewLength: 50,
@@ -3178,6 +3250,9 @@ def render_html(payload_json: str) -> str:
       const selectedMetadataColumns = availableMetadataColumns.filter((column) =>
         selectedMetadataKeys.has(column.key)
       );
+      const allMetadataSelected =
+        availableMetadataColumns.length > 0 &&
+        selectedMetadataColumns.length === availableMetadataColumns.length;
       const exportHref = buildExportHref(buildResultsExportTsv(rows, selectedMetadataColumns));
       const columns = [
         { key: "id", label: "ID", width: "28ch" },
@@ -3225,7 +3300,12 @@ def render_html(payload_json: str) -> str:
         ${
           availableMetadataColumns.length && state.resultsMetadataPickerOpen
             ? `<div class="results-columns-picker">
-                 <span class="results-columns-picker-label">Metadata columns</span>
+                 <div class="results-columns-picker-top">
+                   <span class="results-columns-picker-label">Metadata columns</span>
+                   <button type="button" class="action-button action-button-secondary" id="results-metadata-toggle-all">
+                     ${allMetadataSelected ? "Clear all" : "Add all"}
+                   </button>
+                 </div>
                  <div class="results-columns-grid">
                    ${availableMetadataColumns.map((column) => `
                      <label class="results-column-option">
@@ -3290,6 +3370,13 @@ def render_html(payload_json: str) -> str:
           ).map((item) => item.getAttribute("data-results-metadata-column")).filter(Boolean);
           render();
         });
+      });
+
+      resultsPageEl.querySelector("#results-metadata-toggle-all")?.addEventListener("click", () => {
+        state.resultsMetadataColumns = allMetadataSelected
+          ? []
+          : availableMetadataColumns.map((column) => column.key);
+        render();
       });
 
       resultsPageEl.querySelectorAll("[data-results-select-id]").forEach((button) => {
@@ -3635,6 +3722,159 @@ def render_html(payload_json: str) -> str:
         return "no assignment";
       }
       return ssNames[code] ?? `other (${code})`;
+    }
+
+    function structureCartoonClass(code) {
+      if (["H", "G", "I"].includes(code)) {
+        return "helix";
+      }
+      if (["E", "B"].includes(code)) {
+        return "strand";
+      }
+      return "coil";
+    }
+
+    function rainbowColor(fraction) {
+      const stops = [
+        [217, 55, 55],
+        [235, 140, 30],
+        [232, 196, 54],
+        [65, 170, 95],
+        [52, 120, 210],
+        [130, 80, 190],
+      ];
+      const clampedFraction = clamp(fraction, 0, 1);
+      const scaled = clampedFraction * (stops.length - 1);
+      const index = Math.min(stops.length - 2, Math.floor(scaled));
+      const localFraction = scaled - index;
+      const start = stops[index];
+      const end = stops[index + 1];
+      const rgb = start.map((channel, channelIndex) =>
+        Math.round(channel + (end[channelIndex] - channel) * localFraction)
+      );
+      return `rgb(${rgb[0]}, ${rgb[1]}, ${rgb[2]})`;
+    }
+
+    function structureSelectedColor(mode, runValue, residueStart, residueEnd, proteinLength) {
+      if (mode === "selected") {
+        return { fill: "#d94f43", stroke: "#b3342b" };
+      }
+      if (mode === "structure") {
+        const ssColor = ssColors[runValue] ?? "#7f8c8d";
+        return { fill: ssColor, stroke: ssColor };
+      }
+      const midpoint = ((residueStart + residueEnd) / 2 - 1) / Math.max(1, proteinLength - 1);
+      const rainbow = rainbowColor(midpoint);
+      return { fill: rainbow, stroke: rainbow };
+    }
+
+    function renderStructureSchematic(entry, activeRange, colorMode) {
+      const track = preferredStructureTrack(entry);
+      if (!track?.compatible) {
+        return "";
+      }
+
+      const W = 234;
+      const H = 42;
+      const PAD_X = 8;
+      const TOP_Y = 16;
+      const MID_Y = 24;
+      const BOTTOM_Y = 32;
+      const innerW = W - PAD_X * 2;
+      const proteinLength = entry.proteinSequence.length;
+      const selectedStart = Math.max(1, activeRange.start);
+      const selectedEnd = Math.min(proteinLength, activeRange.end);
+      function xPos(pos) {
+        if (proteinLength <= 1) {
+          return PAD_X;
+        }
+        return PAD_X + ((pos - 1) / (proteinLength - 1)) * innerW;
+      }
+
+      function drawCartoonRun(run, fill, stroke, clipId = null) {
+        const x = xPos(run.start + 1);
+        const width = Math.max(2, xPos(run.end + 1) - x);
+        const cartoonClass = structureCartoonClass(run.value);
+        const clipAttr = clipId ? ` clip-path="url(#${clipId})"` : "";
+
+        if (cartoonClass === "helix") {
+          const ridgeCount = Math.max(1, Math.floor(width / 12));
+          const bits = [
+            `<rect x="${x}" y="${TOP_Y}" width="${width}" height="${BOTTOM_Y - TOP_Y}" fill="${fill}" stroke="${stroke}" stroke-width="1" rx="6"${clipAttr} />`
+          ];
+          for (let ridge = 1; ridge <= ridgeCount; ridge += 1) {
+            const ridgeX = x + (ridge * width) / (ridgeCount + 1);
+            bits.push(
+              `<line x1="${ridgeX}" y1="${TOP_Y + 1}" x2="${ridgeX}" y2="${BOTTOM_Y - 1}" stroke="${stroke}" stroke-width="1"${clipAttr} />`
+            );
+          }
+          return bits.join("");
+        }
+
+        if (cartoonClass === "strand") {
+          const arrowHead = Math.min(10, Math.max(4, width * 0.35));
+          const bodyEnd = x + Math.max(1, width - arrowHead);
+          const arrowPath = [
+            `M ${x} ${TOP_Y + 2}`,
+            `L ${bodyEnd} ${TOP_Y + 2}`,
+            `L ${bodyEnd} ${TOP_Y}`,
+            `L ${x + width} ${MID_Y}`,
+            `L ${bodyEnd} ${BOTTOM_Y}`,
+            `L ${bodyEnd} ${BOTTOM_Y - 2}`,
+            `L ${x} ${BOTTOM_Y - 2}`,
+            "Z",
+          ].join(" ");
+          return `<path d="${arrowPath}" fill="${fill}" stroke="${stroke}" stroke-width="1"${clipAttr} />`;
+        }
+
+        return `<line x1="${x}" y1="${MID_Y}" x2="${x + width}" y2="${MID_Y}" stroke="${stroke}" stroke-width="2" stroke-linecap="round"${clipAttr} />`;
+      }
+
+      const runsSvg = buildRuns(track.values)
+        .filter((run) => run.value !== null)
+        .map((run) => drawCartoonRun(run, "#d9d9d9", "#8f8f8f"))
+        .join("");
+      const selectedRunsSvg = buildRuns(track.values)
+        .filter((run) => run.value !== null)
+        .map((run) => {
+          const proteinStartForRun = run.start + 1;
+          const proteinEndForRun = run.end + 1;
+          const selectedColors = structureSelectedColor(
+            colorMode,
+            run.value,
+            proteinStartForRun,
+            proteinEndForRun,
+            proteinLength
+          );
+          return drawCartoonRun(
+            run,
+            selectedColors.fill,
+            selectedColors.stroke,
+            `selected-clip-${sanitizeDomId(entry.id)}`
+          );
+        })
+        .join("");
+
+      const selectedX = xPos(selectedStart);
+      const selectedWidth = Math.max(1, xPos(selectedEnd) - selectedX);
+
+      return `
+        <div class="structure-schematic-overlay">
+          <div class="structure-schematic-title">2D structure map</div>
+          <svg class="structure-schematic-svg" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">
+            <defs>
+              <clipPath id="selected-clip-${sanitizeDomId(entry.id)}">
+                <rect x="${selectedX}" y="0" width="${selectedWidth}" height="${H}" />
+              </clipPath>
+            </defs>
+            <line x1="${PAD_X}" y1="${MID_Y}" x2="${W - PAD_X}" y2="${MID_Y}" stroke="#cfcfcf" stroke-width="1" />
+            ${runsSvg}
+            ${selectedRunsSvg}
+            <line x1="${selectedX}" y1="4" x2="${selectedX}" y2="${H - 4}" stroke="#222" stroke-width="1.5" />
+            <line x1="${selectedX + selectedWidth}" y1="4" x2="${selectedX + selectedWidth}" y2="${H - 4}" stroke="#222" stroke-width="1.5" />
+          </svg>
+        </div>
+      `;
     }
 
     function getStructureSelection(entry, activeRange) {
@@ -4561,11 +4801,25 @@ def render_html(payload_json: str) -> str:
           values: entry.evidence.structureDssp.values,
           height: 20
         });
+        availableTracks.push({
+          type: "structureCartoon",
+          label: "DSSP 2D",
+          coverage: entry.evidence.structureDssp.coverage,
+          values: entry.evidence.structureDssp.values,
+          height: 20
+        });
       }
       if (entry.evidence.structureUniprot?.compatible) {
         availableTracks.push({
           type: "structure",
           label: "UniProt SS",
+          coverage: entry.evidence.structureUniprot.coverage,
+          values: entry.evidence.structureUniprot.values,
+          height: 20
+        });
+        availableTracks.push({
+          type: "structureCartoon",
+          label: "UniProt 2D",
           coverage: entry.evidence.structureUniprot.coverage,
           values: entry.evidence.structureUniprot.values,
           height: 20
@@ -4717,6 +4971,54 @@ def render_html(payload_json: str) -> str:
               `</rect>`
             );
           });
+        } else if (track.type === "structureCartoon") {
+          const midY = y + track.height / 2;
+          const topY = y + 4;
+          const bottomY = y + track.height - 4;
+          buildRuns(track.values).forEach((run) => {
+            if (run.value === null) {
+              return;
+            }
+            const x = xPos(run.start + 1);
+            const width = Math.max(2, (run.end - run.start + 1) * residueWidth);
+            const cartoonClass = structureCartoonClass(run.value);
+            const tooltip = `${track.label}: ${structureTypeName(run.value)} (${run.value}), aa ${run.start + 1}-${run.end + 1}`;
+
+            if (cartoonClass === "helix") {
+              const ridgeCount = Math.max(1, Math.floor(width / 12));
+              svg.push(
+                `<g><title>${escapeHtml(tooltip)}</title>` +
+                  `<rect x="${x}" y="${topY}" width="${width}" height="${bottomY - topY}" fill="#f0b1aa" stroke="#c43c31" stroke-width="1" rx="5" />`
+              );
+              for (let ridge = 1; ridge <= ridgeCount; ridge += 1) {
+                const ridgeX = x + (ridge * width) / (ridgeCount + 1);
+                svg.push(
+                  `<line x1="${ridgeX}" y1="${topY + 1}" x2="${ridgeX}" y2="${bottomY - 1}" stroke="#c43c31" stroke-width="1" opacity="0.9" />`
+                );
+              }
+              svg.push(`</g>`);
+            } else if (cartoonClass === "strand") {
+              const arrowHead = Math.min(9, Math.max(4, width * 0.35));
+              const bodyEnd = x + Math.max(1, width - arrowHead);
+              const arrowPath = [
+                `M ${x} ${topY + 2}`,
+                `L ${bodyEnd} ${topY + 2}`,
+                `L ${bodyEnd} ${topY}`,
+                `L ${x + width} ${midY}`,
+                `L ${bodyEnd} ${bottomY}`,
+                `L ${bodyEnd} ${bottomY - 2}`,
+                `L ${x} ${bottomY - 2}`,
+                "Z",
+              ].join(" ");
+              svg.push(
+                `<path d="${arrowPath}" fill="#6ea6dd" stroke="#2868a0" stroke-width="1"><title>${escapeHtml(tooltip)}</title></path>`
+              );
+            } else {
+              svg.push(
+                `<line x1="${x}" y1="${midY}" x2="${x + width}" y2="${midY}" stroke="#7f8c8d" stroke-width="2" stroke-linecap="round"><title>${escapeHtml(tooltip)}</title></line>`
+              );
+            }
+          });
         } else {
           const trackTop = y + 3;
           const trackHeight = track.height - 6;
@@ -4769,14 +5071,15 @@ def render_html(payload_json: str) -> str:
           <svg class="browser-svg" viewBox="0 0 ${SVG_W} ${totalHeight}" preserveAspectRatio="none">
             ${svg.join("")}
           </svg>
-          <div class="browser-legend">
-            <span class="browser-legend-item"><span class="browser-legend-swatch browser-legend-helix"></span>helix / structured helix-like</span>
-            <span class="browser-legend-item"><span class="browser-legend-swatch browser-legend-strand"></span>strand / sheet-like</span>
-            <span class="browser-legend-item"><span class="browser-legend-swatch browser-legend-coil"></span>coil / turn classes</span>
-            <span class="browser-legend-item"><span class="browser-legend-swatch browser-legend-numeric"></span>numeric tracks use their own scale (conservation, IUPred 0–1, pLDDT 0–100)</span>
-            <span class="browser-legend-item"><span class="browser-legend-swatch browser-legend-range"></span>selected construct span</span>
-          </div>
+        <div class="browser-legend">
+          <span class="browser-legend-item"><span class="browser-legend-swatch browser-legend-helix"></span>helix / structured helix-like</span>
+          <span class="browser-legend-item"><span class="browser-legend-swatch browser-legend-strand"></span>strand / sheet-like</span>
+          <span class="browser-legend-item"><span class="browser-legend-swatch browser-legend-coil"></span>coil / turn classes</span>
+          <span class="browser-legend-item"><span class="browser-legend-swatch browser-legend-range"></span>2D SS cartoon track uses capsules, arrows, and lines</span>
+          <span class="browser-legend-item"><span class="browser-legend-swatch browser-legend-numeric"></span>numeric tracks use their own scale (conservation, IUPred 0–1, pLDDT 0–100)</span>
+          <span class="browser-legend-item"><span class="browser-legend-swatch browser-legend-range"></span>selected construct span</span>
         </div>
+      </div>
       `;
     }
 
@@ -4786,6 +5089,11 @@ def render_html(payload_json: str) -> str:
         return "";
       }
       const selection = getStructureSelection(entry, activeRange);
+      const colorModes = [
+        { key: "rainbow", label: "Rainbow" },
+        { key: "selected", label: "Red" },
+        { key: "structure", label: "Structure" },
+      ];
 
       return `
         <div class="structure-pane-wrap ${docked ? "structure-pane-wrap-docked" : ""}">
@@ -4815,6 +5123,16 @@ def render_html(payload_json: str) -> str:
                 </div>`
           }
           <div class="structure-panel ${docked ? "structure-panel-docked" : ""}">
+            ${renderStructureSchematic(entry, activeRange, state.structureColorMode)}
+            <div class="structure-color-controls">
+              ${colorModes.map((mode) => `
+                <button
+                  type="button"
+                  class="structure-color-button ${state.structureColorMode === mode.key ? "structure-color-button-active" : ""}"
+                  data-structure-color-mode="${escapeHtml(mode.key)}"
+                >${escapeHtml(mode.label)}</button>
+              `).join("")}
+            </div>
             <div
               id="structure-viewer-${sanitizeDomId(entry.id)}"
               class="structure-viewer"
@@ -4828,26 +5146,6 @@ def render_html(payload_json: str) -> str:
     function _applyStructureColors(viewer, entry, activeRange, withZoom) {
       viewer.setStyle({}, { cartoon: { color: "#d0d0d0" } });
       const selection = getStructureSelection(entry, activeRange);
-      function rainbowColor(fraction) {
-        const stops = [
-          [217, 55, 55],
-          [235, 140, 30],
-          [232, 196, 54],
-          [65, 170, 95],
-          [52, 120, 210],
-          [130, 80, 190],
-        ];
-        const clampedFraction = clamp(fraction, 0, 1);
-        const scaled = clampedFraction * (stops.length - 1);
-        const index = Math.min(stops.length - 2, Math.floor(scaled));
-        const localFraction = scaled - index;
-        const start = stops[index];
-        const end = stops[index + 1];
-        const rgb = start.map((channel, channelIndex) =>
-          Math.round(channel + (end[channelIndex] - channel) * localFraction)
-        );
-        return `rgb(${rgb[0]}, ${rgb[1]}, ${rgb[2]})`;
-      }
 
       if (selection.hasOverlap && selection.residueRange) {
         const residueNumbers = Array.isArray(entry.evidence.structureModel?.mapping?.residueNumbers)
@@ -4859,6 +5157,7 @@ def render_html(payload_json: str) -> str:
         const proteinStart = Number(entry.evidence.structureModel?.mapping?.proteinStart) || 1;
         const proteinEnd = Number(entry.evidence.structureModel?.mapping?.proteinEnd) || proteinStart;
         const denominator = Math.max(1, proteinEnd - proteinStart);
+        const structureTrack = preferredStructureTrack(entry);
         viewer.setStyle(
           { resi: `${selection.residueRange.start}-${selection.residueRange.end}` },
           {
@@ -4866,7 +5165,15 @@ def render_html(payload_json: str) -> str:
               colorfunc: (atom) => {
                 const residueIndex = residueIndexByNumber.get(Number(atom.resi));
                 if (residueIndex === undefined) {
-                  return rainbowColor(0);
+                  return state.structureColorMode === "selected" ? "#d94f43" : "#b0b0b0";
+                }
+                if (state.structureColorMode === "selected") {
+                  return "#d94f43";
+                }
+                if (state.structureColorMode === "structure") {
+                  const proteinResidue = proteinStart + residueIndex;
+                  const ssCode = structureTrack?.values?.[proteinResidue - 1];
+                  return ssColors[ssCode] ?? "#7f8c8d";
                 }
                 return rainbowColor(residueIndex / denominator);
               }
@@ -5353,49 +5660,6 @@ def render_html(payload_json: str) -> str:
             ${renderTrackViewer(entry, candidateRanges, activeRange, analysis.customRanges)}
             <div class="track-drag-note">Drag the black range boundaries directly on the coordinate plot.</div>
           </div>
-          <div class="controls-row">
-            <div>
-              <div class="controls-section-label">Suggested ranges</div>
-              <div class="candidate-buttons">
-                ${
-                  candidateRanges.length
-                    ? candidateRanges
-                        .map((candidate) => {
-                          const isActive =
-                            candidate.start === activeRange.start && candidate.end === activeRange.end;
-                          return `
-                            <button
-                              type="button"
-                              class="candidate-btn ${isActive ? "candidate-btn-active" : ""}"
-                              data-candidate-range="${candidate.key}"
-                              title="${escapeHtml(candidate.description)}"
-                            >
-                              <span class="candidate-btn-dot" style="background: ${candidateColors[candidate.key] ?? "#888"}"></span>
-                              ${escapeHtml(candidate.label)} ${candidate.start}-${candidate.end}
-                            </button>
-                          `;
-                        })
-                        .join("")
-                    : `<span class="metric-chip">No candidate ranges available</span>`
-                }
-              </div>
-            </div>
-
-            <div>
-              <div class="controls-section-label">Manual range</div>
-              <div class="manual-range-row">
-                <label>Start
-                  <input type="number" id="range-start-input" min="1" max="${entry.proteinSequence.length}" value="${activeRange.start}">
-                </label>
-                <label>End
-                  <input type="number" id="range-end-input" min="${activeRange.start}" max="${entry.proteinSequence.length}" value="${activeRange.end}">
-                </label>
-              </div>
-              <div class="range-status-line">
-                construct status: <span class="${statusClass(construct.status)}">${escapeHtml(construct.status)}</span>
-              </div>
-            </div>
-          </div>
         </details>
       `;
       const structureDockedMarkup = hasStructureModel
@@ -5589,20 +5853,6 @@ def render_html(payload_json: str) -> str:
         </details>
       `;
 
-      detailPanelEl.querySelectorAll("[data-candidate-range]").forEach((button) => {
-        button.addEventListener("click", () => {
-          const candidate = analysis.suggestion.candidates[button.getAttribute("data-candidate-range")];
-          if (!candidate) {
-            return;
-          }
-          state.manualRanges[entry.id] = clampRange({
-            start: candidate.start,
-            end: candidate.end
-          }, entry.proteinSequence.length);
-          render();
-        });
-      });
-
       detailPanelEl.querySelector("[data-toggle-structure-dock]")?.addEventListener("click", (event) => {
         event.preventDefault();
         event.stopPropagation();
@@ -5610,10 +5860,18 @@ def render_html(payload_json: str) -> str:
         render();
       });
 
-      function applyManualRange(start, end) {
-        state.manualRanges[entry.id] = clampRange({ start, end }, entry.proteinSequence.length);
-        render();
-      }
+      detailPanelEl.querySelectorAll("[data-structure-color-mode]").forEach((button) => {
+        button.addEventListener("click", (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          const nextMode = button.getAttribute("data-structure-color-mode");
+          if (!nextMode || nextMode === state.structureColorMode) {
+            return;
+          }
+          state.structureColorMode = nextMode;
+          render();
+        });
+      });
 
       function svgClientXToAa(clientX) {
         const svg = detailPanelEl.querySelector("#range-track-svg");
@@ -5680,22 +5938,6 @@ def render_html(payload_json: str) -> str:
           });
         });
       }
-
-      detailPanelEl.querySelector("#range-start-input")?.addEventListener("input", (event) => {
-        state.manualRanges[entry.id] = clampRange({
-          start: Number(event.target.value),
-          end: getActiveRange(analysis).end
-        }, entry.proteinSequence.length);
-        debounceRender();
-      });
-
-      detailPanelEl.querySelector("#range-end-input")?.addEventListener("input", (event) => {
-        state.manualRanges[entry.id] = clampRange({
-          start: getActiveRange(analysis).start,
-          end: Number(event.target.value)
-        }, entry.proteinSequence.length);
-        debounceRender();
-      });
 
       initializeStructureViewer(entry, activeRange, state.structureDockRight);
       bindTrackDragging();
